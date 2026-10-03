@@ -572,6 +572,7 @@ from flcore.servers.serverala import FedALA
 from flcore.servers.serverpac_rec import PAC_REC
 from flcore.servers.serverpac import FedPAC
 from flcore.servers.servervtc import FedVTC  # <-- Tích hợp FedVTC Server
+from flcore.servers.serverprotostd import FedProtoStd
 
 from flcore.trainmodel.models import *
 
@@ -800,6 +801,12 @@ def run(args):
             args.model = BaseHeadSplit(args.model, args.head)
             server = FedProto(args, i)
 
+        elif args.algorithm == "FedProtoStd":
+            args.head = copy.deepcopy(args.model.fc)
+            args.model.fc = nn.Identity()
+            args.model = BaseHeadSplit(args.model, args.head)
+            server = FedProtoStd(args, i)
+
         elif args.algorithm == "FedDyn":
             server = FedDyn(args, i)
 
@@ -981,6 +988,16 @@ if __name__ == "__main__":
                         help="Kích thước vector đặc trưng Z (512 cho ResNet18)")
     parser.add_argument('-nfs', "--num_fake_samples", type=int, default=200,
                         help="Số ảnh chưng cất cho mỗi class từ phân phối Gaussian")
+
+    # FedProtoStd Hyperparameters
+    parser.add_argument('--lamda_align', type=float, default=1.0,
+                        help="Weight for distribution-weighted prototype alignment loss")
+    parser.add_argument('--lamda_aug', type=float, default=1.0,
+                        help="Weight for Gaussian feature augmentation loss for head")
+    parser.add_argument('--num_aug_samples', type=int, default=10,
+                        help="Number of virtual Gaussian samples per class per batch")
+    parser.add_argument('--eval_mode', type=str, default='head', choices=['head', 'proto'],
+                        help="Evaluation mode: 'head' (classifier head) or 'proto' (Mahalanobis metric)")
 
     args = parser.parse_args()
 

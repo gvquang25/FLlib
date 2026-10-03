@@ -28,7 +28,9 @@ def generate_mnist(dir_path, num_clients, num_classes, niid, balance, partition,
     if check(config_path, train_path, test_path, num_clients, num_classes, alpha, niid, balance, partition):
         return
 
-    # FIX HTTP Error 403: Forbidden
+    # FIX HTTP Error 403: Forbidden & macOS SSL certificate issue
+    import ssl
+    ssl._create_default_https_context = ssl._create_unverified_context
     from six.moves import urllib
     opener = urllib.request.build_opener()
     opener.addheaders = [('User-agent', 'Mozilla/5.0')]

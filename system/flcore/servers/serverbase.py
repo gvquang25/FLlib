@@ -14,8 +14,15 @@ import torch.nn.functional as F
 import copy
 import numpy as np
 
-from torch.utils.tensorboard import SummaryWriter
-import wandb
+try:
+    from torch.utils.tensorboard import SummaryWriter
+except ImportError:
+    SummaryWriter = None
+
+try:
+    import wandb
+except ImportError:
+    wandb = None
 
 
 class Server(object):
@@ -75,12 +82,14 @@ class Server(object):
         if self.args.log:
             args.run_name = f"{args.algorithm}__{args.dataset}__{args.num_clients}__{int(time.time())}"
             
-            self.save_dir = f"runs/{args.run_name}"
-            self.writer = SummaryWriter(self.save_dir)
-            self.writer.add_text(
-                "hyperparameters",
-                "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
-            )
+            if SummaryWriter is not None:
+                self.writer = SummaryWriter(self.save_dir)
+                self.writer.add_text(
+                    "hyperparameters",
+                    "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
+                )
+            else:
+                self.writer = None
             
             # Khởi tạo phiên WandB
             wandb.init(
@@ -286,20 +295,18 @@ class Server(object):
         print("Std Test AUC: {:.4f}".format(test_auc_std))
         
         if self.args.log:
-            self.writer.add_scalar("charts/train_loss", train_loss, self.current_round)
-            wandb.log({"charts/train_loss": train_loss}, step=self.current_round)
-            
-            self.writer.add_scalar("charts/test_acc", test_acc, self.current_round)
-            wandb.log({"charts/test_acc": test_acc}, step=self.current_round)
-            
-            self.writer.add_scalar("charts/test_auc", test_auc, self.current_round)
-            wandb.log({"charts/test_auc": test_auc}, step=self.current_round)
-            
-            self.writer.add_scalar("charts/test_acc_std", test_acc_std, self.current_round)
-            wandb.log({"charts/test_acc_std": test_acc_std}, step=self.current_round)
-            
-            self.writer.add_scalar("charts/test_auc_std", test_auc_std, self.current_round)
-            wandb.log({"charts/test_auc_std": test_auc_std}, step=self.current_round)
+            if self.writer is not None:
+                self.writer.add_scalar("charts/train_loss", train_loss, self.current_round)
+                self.writer.add_scalar("charts/test_acc", test_acc, self.current_round)
+                self.writer.add_scalar("charts/test_auc", test_auc, self.current_round)
+                self.writer.add_scalar("charts/test_acc_std", test_acc_std, self.current_round)
+                self.writer.add_scalar("charts/test_auc_std", test_auc_std, self.current_round)
+            if wandb is not None:
+                wandb.log({"charts/train_loss": train_loss}, step=self.current_round)
+                wandb.log({"charts/test_acc": test_acc}, step=self.current_round)
+                wandb.log({"charts/test_auc": test_auc}, step=self.current_round)
+                wandb.log({"charts/test_acc_std": test_acc_std}, step=self.current_round)
+                wandb.log({"charts/test_auc_std": test_auc_std}, step=self.current_round)
         
         self.current_round += 1
 

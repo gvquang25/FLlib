@@ -4,8 +4,10 @@ import time
 import torch
 from torch.utils.data import TensorDataset
 from collections import OrderedDict
-import numpy as np
-import wandb
+try:
+    import wandb
+except ImportError:
+    wandb = None
 
 from flcore.servers.serverbase import Server
 from flcore.clients.clientvtc import clientVTC

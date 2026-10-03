@@ -7,7 +7,10 @@ import random
 import torch
 import numpy as np
 import copy
-import hdbscan
+try:
+    import hdbscan
+except ImportError:
+    hdbscan = None
 from sklearn.cluster import KMeans, SpectralClustering
 class FLAME(Server):
     def __init__(self, args, times):

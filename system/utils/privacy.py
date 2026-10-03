@@ -1,4 +1,7 @@
-from opacus import PrivacyEngine
+try:
+    from opacus import PrivacyEngine
+except ImportError:
+    PrivacyEngine = None
 import torch
 import torch.nn.functional as F
 
