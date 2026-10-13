@@ -41,6 +41,7 @@ from flcore.servers.serverala import FedALA
 from flcore.servers.serverpac_rec import PAC_REC
 from flcore.servers.serverpac import FedPAC
 from flcore.servers.servernew import FedNew
+from flcore.servers.serverfpl import serverFPL
 
 from flcore.trainmodel.models import *
 
@@ -334,6 +335,12 @@ def run(args):
             args.model.fc = nn.Identity()
             args.model = BaseHeadSplit(args.model, args.head)
             server = FedNew(args, i)
+
+        elif args.algorithm in ["FPL", "fpl"]:
+            args.head = copy.deepcopy(args.model.fc)
+            args.model.fc = nn.Identity()
+            args.model = BaseHeadSplit(args.model, args.head)
+            server = serverFPL(args, i)
             
         else:
             raise NotImplementedError
@@ -573,6 +580,7 @@ from flcore.servers.serverpac_rec import PAC_REC
 from flcore.servers.serverpac import FedPAC
 from flcore.servers.servervtc import FedVTC  # <-- Tích hợp FedVTC Server
 from flcore.servers.serverprotostd import FedProtoStd
+from flcore.servers.serverfpl import serverFPL
 
 from flcore.trainmodel.models import *
 
@@ -850,6 +858,12 @@ def run(args):
             # Khởi tạo trực tiếp FedVTC, giữ nguyên kiến trúc mô hình không bị chia tách
             server = FedVTC(args, i)
 
+        elif args.algorithm in ["FPL", "fpl"]:
+            args.head = copy.deepcopy(args.model.fc)
+            args.model.fc = nn.Identity()
+            args.model = BaseHeadSplit(args.model, args.head)
+            server = serverFPL(args, i)
+
         else:
             raise NotImplementedError
 
@@ -983,11 +997,15 @@ if __name__ == "__main__":
 
     # FedVTC Hyperparameters
     parser.add_argument('-er', "--extra_rounds", type=int, default=50,
-                        help="Số vòng extra fine-tuning với ảnh chưng cất")
+                        help="Number of extra fine-tuning rounds")
     parser.add_argument('-zd', "--z_dim", type=int, default=512,
-                        help="Kích thước vector đặc trưng Z (512 cho ResNet18)")
+                        help="Dimension of feature vector Z")
     parser.add_argument('-nfs', "--num_fake_samples", type=int, default=200,
-                        help="Số ảnh chưng cất cho mỗi class từ phân phối Gaussian")
+                        help="Number of distilled fake samples per class")
+
+    # FPL
+    parser.add_argument('-nct', "--infoNCET", type=float, default=0.1,
+                        help="Temperature parameter for InfoNCE in FPL")
 
     # FedProtoStd Hyperparameters
     parser.add_argument('--lamda_align', type=float, default=1.0,
