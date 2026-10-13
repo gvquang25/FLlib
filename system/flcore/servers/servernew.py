@@ -1,14 +1,14 @@
-from flcore.clients.clientnew import clientNew
-from flcore.servers.serverbase import Server
-from utils.data_utils import read_client_data
-from threading import Thread
+from collections import defaultdict
+import copy
+import os
 import time
 import numpy as np
-from collections import defaultdict
 import torch
 import wandb
 
-# Định danh kế thừa ServerBase
+from flcore.clients.clientnew import clientNew
+from flcore.servers.serverbase import Server
+
 ServerBase = Server
 
 
@@ -19,14 +19,12 @@ class FedNew(Server):
         if not hasattr(self, 'current_round'):
             self.current_round = 0
 
-        # select slow clients
         self.set_slow_clients()
         self.set_clients(clientNew)
 
         print(f"\nJoin ratio / total clients: {self.join_ratio} / {self.num_clients}")
         print("Finished creating server and clients.")
 
-        # self.load_model()
         self.Budget = []
         self.num_classes = args.num_classes
         self.global_stats = {}
@@ -39,18 +37,27 @@ class FedNew(Server):
             if i % self.eval_gap == 0:
                 print(f"\n-------------Round number: {i}-------------")
                 print("\nEvaluate personalized models")
+
+                tsne_gap = getattr(self.args, 'tsne_gap', None)
+                tsne_gap = self.eval_gap if (tsne_gap is None or tsne_gap <= 0) else tsne_gap
+                if i % tsne_gap == 0 and len(self.clients) > 0:
+                    # Dùng self.clients[0] cố định để theo dõi sự tiến hóa cụm đặc trưng.
+                    # Khi join_ratio < 1, client 0 có thể không được chọn train ở round trước;
+                    # thông tin round tương ứng đã được thể hiện rõ trên tiêu đề ảnh t-SNE.
+                    self.clients[0].visualize_tsne(round_idx=i)
+
                 self.evaluate()
 
-            # 1. Thu thập prototype + std từ các client được chọn
+            # 1. Nhận stats từ clients
             self.receive_protos()
 
-            # 2. Server tổng hợp prototype + std (Weighted Mean & Pooled Variance)
+            # 2. Server tổng hợp Weighted Mean & Pooled Variance
             self.global_stats = proto_aggregation(self.uploaded_stats)
 
-            # 3. Phân phối global stats (gồm mean + std) về cho clients
+            # 3. Phân phối global stats xuống clients
             self.send_protos()
 
-            # 4. Client huấn luyện sử dụng global prototype & std vừa nhận
+            # 4. Client huấn luyện
             for client in self.selected_clients:
                 client.train()
 
@@ -65,27 +72,27 @@ class FedNew(Server):
         print(sum(self.Budget[1:]) / len(self.Budget[1:]))
 
         if getattr(self.args, 'log', False) and len(self.rs_test_acc) > 0:
-            wandb.log({
-                "charts/best_acc": max(self.rs_test_acc),
-                "charts/mean_round_time": sum(self.Budget[1:]) / max(len(self.Budget[1:]), 1)
-            })
+            try:
+                if wandb.run is not None:
+                    wandb.log({
+                        "charts/best_acc": max(self.rs_test_acc),
+                        "charts/mean_round_time": sum(self.Budget[1:]) / max(len(self.Budget[1:]), 1)
+                    })
+            except Exception:
+                pass
 
         self.save_results()
 
     def send_protos(self):
-        assert (len(self.clients) > 0)
-
+        assert len(self.clients) > 0
         for client in self.clients:
             start_time = time.time()
-
             client.set_protos(self.global_stats)
-
             client.send_time_cost['num_rounds'] += 1
             client.send_time_cost['total_cost'] += 2 * (time.time() - start_time)
 
     def receive_protos(self):
-        assert (len(self.selected_clients) > 0)
-
+        assert len(self.selected_clients) > 0
         self.uploaded_ids = []
         self.uploaded_stats = []
         for client in self.selected_clients:
@@ -132,21 +139,23 @@ class FedNew(Server):
                 self.writer.add_scalar("charts/test_acc_std", test_acc_std, self.current_round)
                 self.writer.add_scalar("charts/test_auc_std", test_auc_std, self.current_round)
 
-            wandb_log_dict = {
-                "charts/train_loss": train_loss,
-                "charts/test_acc": test_acc,
-                "charts/test_auc": test_auc,
-                "charts/test_acc_std": test_acc_std,
-                "charts/test_auc_std": test_auc_std,
-            }
-            if hasattr(self, 'global_stats') and self.global_stats:
-                wandb_log_dict["charts/num_global_classes"] = len(self.global_stats)
-
-            wandb.log(wandb_log_dict, step=self.current_round)
+            try:
+                if wandb.run is not None:
+                    wandb_log_dict = {
+                        "charts/train_loss": train_loss,
+                        "charts/test_acc": test_acc,
+                        "charts/test_auc": test_auc,
+                        "charts/test_acc_std": test_acc_std,
+                        "charts/test_auc_std": test_auc_std,
+                    }
+                    if hasattr(self, 'global_stats') and self.global_stats:
+                        wandb_log_dict["charts/num_global_classes"] = len(self.global_stats)
+                    wandb.log(wandb_log_dict, step=self.current_round)
+            except Exception:
+                pass
 
         self.current_round += 1
 
-    # Method alias hỗ trợ gọi trực tiếp
     def proto_aggregation(self, local_stats_dict=None):
         if local_stats_dict is None:
             self.receive_protos()
@@ -159,23 +168,16 @@ class FedNew(Server):
 
 def proto_aggregation(local_stats_list):
     """
-    Tổng hợp toàn cục Prototype & Standard Deviation:
-    - Input: Danh sách hoặc dict các local_stats từ active clients:
-             [{class_c: {'mean': Tensor, 'std': Tensor, 'count': int}}, ...]
-    - Weighted Mean:
-             global_mean = sum(n_k * mean_k) / sum(n_k)
-    - Pooled Variance:
-             pooled_var = sum(n_k * (local_var + (mean_k - global_mean)**2)) / total_count
-             global_std = sqrt(clamp(pooled_var, min=1e-8))
-    - Output: {class_c: {'mean': Tensor, 'std': Tensor}}
+    Weighted Mean & Pooled Variance cho FedNew:
+    global_mean = sum(n_k * mean_k) / sum(n_k)
+    pooled_var = sum(n_k * (std_k^2 + (mean_k - global_mean)^2)) / sum(n_k)
     """
     if isinstance(local_stats_list, dict):
         local_stats_list = list(local_stats_list.values())
 
-    if not local_stats_list or len(local_stats_list) == 0:
+    if not local_stats_list:
         return {}
 
-    # Tìm danh sách class và kích thước vector đặc trưng
     all_classes = set()
     feat_dim = None
 
@@ -187,33 +189,22 @@ def proto_aggregation(local_stats_list):
                     feat_dim = s['mean'].size(0)
                     break
 
-    if feat_dim is None:
-        feat_dim = 512
-
+    feat_dim = feat_dim or 512
     global_stats = {}
 
     for c in sorted(all_classes):
-        valid_stats = [
-            s[c] for s in local_stats_list
-            if c in s and s[c].get('count', 0) > 0
-        ]
+        valid_stats = [s[c] for s in local_stats_list if c in s and s[c].get('count', 0) > 0]
         total_count = sum(s['count'] for s in valid_stats)
 
-        # Trường hợp biên: Không có client nào sở hữu class c
         if total_count == 0:
-            global_stats[c] = {
-                'mean': torch.zeros(feat_dim),
-                'std': torch.zeros(feat_dim)
-            }
+            global_stats[c] = {'mean': torch.zeros(feat_dim), 'std': torch.zeros(feat_dim)}
             continue
 
-        # 1. Global Mean: Weighted Average theo count
         global_mean = torch.zeros(feat_dim, dtype=torch.float32)
         for s in valid_stats:
             global_mean += s['count'] * s['mean'].float()
-        global_mean = global_mean / total_count
+        global_mean /= total_count
 
-        # 2. Global STD: Pooled Variance
         pooled_var = torch.zeros(feat_dim, dtype=torch.float32)
         for s in valid_stats:
             n_k = s['count']
@@ -221,18 +212,14 @@ def proto_aggregation(local_stats_list):
             mean_dev_sq = (s['mean'].float() - global_mean) ** 2
             pooled_var += n_k * (local_var + mean_dev_sq)
 
-        pooled_var = pooled_var / total_count
+        pooled_var /= total_count
         global_std = torch.sqrt(torch.clamp(pooled_var, min=1e-8))
 
-        global_stats[c] = {
-            'mean': global_mean,
-            'std': global_std
-        }
+        global_stats[c] = {'mean': global_mean, 'std': global_std}
 
     return global_stats
 
 
-# Alias hàm và class tương thích
 aggregate_prototypes_and_stds = proto_aggregation
 ServerNew = FedNew
 serverNew = FedNew

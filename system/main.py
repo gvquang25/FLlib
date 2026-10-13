@@ -1003,9 +1003,17 @@ if __name__ == "__main__":
     parser.add_argument('-nfs', "--num_fake_samples", type=int, default=200,
                         help="Number of distilled fake samples per class")
 
-    # FPL
-    parser.add_argument('-nct', "--infoNCET", type=float, default=0.1,
-                        help="Temperature parameter for InfoNCE in FPL")
+ # FPL / FedNew
+    parser.add_argument('-nct', "--infoNCET", type=float, default=0.1, 
+                        help="Temperature parameter for InfoNCE loss")
+    parser.add_argument('-lp', '--lamda_proto', type=float, default=1.0, 
+                        help="Weight coefficient for prototype loss (InfoNCE + MSE); set to 0.0 to disable")
+    parser.add_argument('--proto_warmup', type=int, default=1, 
+                        help="Number of warmup rounds before applying prototype loss (default 1: skip round 0)")
+    parser.add_argument('--encoder_lr', type=float, default=None, 
+                        help="Separate learning rate for the encoder/backbone (default None: shared optimizer)")
+    parser.add_argument('--tsne_gap', type=int, default=None, 
+                        help="Interval for t-SNE visualization (None or <= 0 defaults to eval_gap)")
 
     # FedProtoStd Hyperparameters
     parser.add_argument('--lamda_align', type=float, default=1.0,
