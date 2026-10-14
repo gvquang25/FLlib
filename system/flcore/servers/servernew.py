@@ -4,6 +4,7 @@ import os
 import time
 import numpy as np
 import torch
+import torch.nn.functional as F
 import wandb
 
 from flcore.clients.clientnew import clientNew
@@ -150,6 +151,35 @@ class FedNew(Server):
                     }
                     if hasattr(self, 'global_stats') and self.global_stats:
                         wandb_log_dict["charts/num_global_classes"] = len(self.global_stats)
+
+                        # Đánh giá 3 chỉ số Prototype & Std
+                        valid_protos = []
+                        valid_stds = []
+                        for c, stats in self.global_stats.items():
+                            if isinstance(stats, dict) and stats.get('mean') is not None:
+                                m = stats['mean'].detach().float().view(-1)
+                                if torch.norm(m) > 1e-8:
+                                    valid_protos.append(m)
+                                    if stats.get('std') is not None:
+                                        valid_stds.append(stats['std'].detach().float().view(-1))
+
+                        if len(valid_protos) >= 2:
+                            P = torch.stack(valid_protos)
+                            K = P.size(0)
+                            triu_indices = torch.triu_indices(K, K, offset=1)
+
+                            # 1. Khoảng cách L2 liên lớp trung bình
+                            dist_matrix = torch.cdist(P, P, p=2)
+                            wandb_log_dict["proto/inter_class_l2_dist"] = float(torch.mean(dist_matrix[triu_indices[0], triu_indices[1]]).item())
+
+                            # 2. Cosine similarity liên lớp trung bình
+                            P_norm = F.normalize(P, p=2, dim=1)
+                            cos_sim_matrix = torch.matmul(P_norm, P_norm.T)
+                            wandb_log_dict["proto/inter_class_cos_sim"] = float(torch.mean(cos_sim_matrix[triu_indices[0], triu_indices[1]]).item())
+
+                        if len(valid_stds) > 0:
+                            S = torch.stack(valid_stds)
+                            wandb_log_dict["proto/mean_pooled_std"] = float(torch.mean(S).item())
                     wandb.log(wandb_log_dict, step=self.current_round)
             except Exception:
                 pass
