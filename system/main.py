@@ -576,11 +576,17 @@ from flcore.servers.servergen import FedGen
 from flcore.servers.serverscaffold import SCAFFOLD
 from flcore.servers.serverdistill import FedDistill
 from flcore.servers.serverala import FedALA
-from flcore.servers.serverpac_rec import PAC_REC
-from flcore.servers.serverpac import FedPAC
+try:
+    from flcore.servers.serverpac_rec import PAC_REC
+    from flcore.servers.serverpac import FedPAC
+except ImportError:
+    PAC_REC = None
+    FedPAC = None
 from flcore.servers.servervtc import FedVTC  # <-- Tích hợp FedVTC Server
 from flcore.servers.serverprotostd import FedProtoStd
 from flcore.servers.serverfpl import serverFPL
+from flcore.servers.servernew import FedNew
+from flcore.servers.servernew_proto import FedNewProto
 
 from flcore.trainmodel.models import *
 
@@ -863,6 +869,18 @@ def run(args):
             args.model.fc = nn.Identity()
             args.model = BaseHeadSplit(args.model, args.head)
             server = serverFPL(args, i)
+
+        elif args.algorithm in ["FedNew", "fednew", "New", "new"]:
+            args.head = copy.deepcopy(args.model.fc)
+            args.model.fc = nn.Identity()
+            args.model = BaseHeadSplit(args.model, args.head)
+            server = FedNew(args, i)
+
+        elif args.algorithm in ["FedNewProto", "fednewproto", "NewProto", "newproto"]:
+            args.head = copy.deepcopy(args.model.fc)
+            args.model.fc = nn.Identity()
+            args.model = BaseHeadSplit(args.model, args.head)
+            server = FedNewProto(args, i)
 
         else:
             raise NotImplementedError

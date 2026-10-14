@@ -3,10 +3,9 @@ import time
 import numpy as np
 import torch
 import torch.nn as nn
-import wandb
-
 from flcore.clients.clientbase import Client
 from utils.tsne_utils import plot_client_tsne
+from utils.wandb_utils import log_client_train
 
 
 class clientNew(Client):
@@ -139,17 +138,7 @@ class clientNew(Client):
                 losses.append(loss_total.item())
 
         # Ghi log WandB an toàn
-        if getattr(self.args, 'log', False) and len(losses) > 0:
-            avg_loss = float(np.mean(losses))
-            try:
-                if wandb.run is not None:
-                    wandb.log({
-                        f"clients/client_{self.id}_train_loss": avg_loss,
-                        f"clients/client_{self.id}_loss_total": avg_loss,
-                        f"clients/client_{self.id}_loss_ce": avg_loss,
-                    }, commit=False)
-            except Exception:
-                pass
+        log_client_train(self, losses)
 
         self.extract_local_stats(trainloader)
         if self.learning_rate_decay:

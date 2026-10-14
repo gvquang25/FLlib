@@ -1,14 +1,9 @@
-from collections import defaultdict
-import copy
-import os
 import time
-import numpy as np
 import torch
-import torch.nn.functional as F
-import wandb
 
 from flcore.clients.clientnew import clientNew
 from flcore.servers.serverbase import Server
+from utils.wandb_utils import log_server_summary
 
 ServerBase = Server
 
@@ -72,15 +67,7 @@ class FedNew(Server):
         print(max(self.rs_test_acc))
         print(sum(self.Budget[1:]) / len(self.Budget[1:]))
 
-        if getattr(self.args, 'log', False) and len(self.rs_test_acc) > 0:
-            try:
-                if wandb.run is not None:
-                    wandb.log({
-                        "charts/best_acc": max(self.rs_test_acc),
-                        "charts/mean_round_time": sum(self.Budget[1:]) / max(len(self.Budget[1:]), 1)
-                    })
-            except Exception:
-                pass
+        log_server_summary(self)
 
         self.save_results()
 
@@ -103,88 +90,6 @@ class FedNew(Server):
             elif hasattr(client, 'extract_local_stats'):
                 self.uploaded_stats.append(client.extract_local_stats())
 
-    def evaluate(self, acc=None, loss=None):
-        stats = self.test_metrics()
-        stats_train = self.train_metrics()
-
-        test_acc = sum(stats[2]) * 1.0 / max(sum(stats[1]), 1)
-        test_auc = sum(stats[3]) * 1.0 / max(sum(stats[1]), 1)
-        train_loss = sum(stats_train[2]) * 1.0 / max(sum(stats_train[1]), 1)
-        accs = [a / max(n, 1) for a, n in zip(stats[2], stats[1])]
-        aucs = [a / max(n, 1) for a, n in zip(stats[3], stats[1])]
-
-        if acc is None:
-            self.rs_test_acc.append(test_acc)
-        else:
-            acc.append(test_acc)
-
-        if loss is None:
-            self.rs_train_loss.append(train_loss)
-        else:
-            loss.append(train_loss)
-
-        print("Averaged Train Loss: {:.4f}".format(train_loss))
-        print("Averaged Test Accurancy: {:.4f}".format(test_acc))
-        print("Averaged Test AUC: {:.4f}".format(test_auc))
-
-        test_acc_std = np.std(accs).item()
-        test_auc_std = np.std(aucs).item()
-        print("Std Test Accurancy: {:.4f}".format(test_acc_std))
-        print("Std Test AUC: {:.4f}".format(test_auc_std))
-
-        if getattr(self.args, 'log', False):
-            if hasattr(self, 'writer') and self.writer is not None:
-                self.writer.add_scalar("charts/train_loss", train_loss, self.current_round)
-                self.writer.add_scalar("charts/test_acc", test_acc, self.current_round)
-                self.writer.add_scalar("charts/test_auc", test_auc, self.current_round)
-                self.writer.add_scalar("charts/test_acc_std", test_acc_std, self.current_round)
-                self.writer.add_scalar("charts/test_auc_std", test_auc_std, self.current_round)
-
-            try:
-                if wandb.run is not None:
-                    wandb_log_dict = {
-                        "charts/train_loss": train_loss,
-                        "charts/test_acc": test_acc,
-                        "charts/test_auc": test_auc,
-                        "charts/test_acc_std": test_acc_std,
-                        "charts/test_auc_std": test_auc_std,
-                    }
-                    if hasattr(self, 'global_stats') and self.global_stats:
-                        wandb_log_dict["charts/num_global_classes"] = len(self.global_stats)
-
-                        # Đánh giá 3 chỉ số Prototype & Std
-                        valid_protos = []
-                        valid_stds = []
-                        for c, stats in self.global_stats.items():
-                            if isinstance(stats, dict) and stats.get('mean') is not None:
-                                m = stats['mean'].detach().float().view(-1)
-                                if torch.norm(m) > 1e-8:
-                                    valid_protos.append(m)
-                                    if stats.get('std') is not None:
-                                        valid_stds.append(stats['std'].detach().float().view(-1))
-
-                        if len(valid_protos) >= 2:
-                            P = torch.stack(valid_protos)
-                            K = P.size(0)
-                            triu_indices = torch.triu_indices(K, K, offset=1)
-
-                            # 1. Khoảng cách L2 liên lớp trung bình
-                            dist_matrix = torch.cdist(P, P, p=2)
-                            wandb_log_dict["proto/inter_class_l2_dist"] = float(torch.mean(dist_matrix[triu_indices[0], triu_indices[1]]).item())
-
-                            # 2. Cosine similarity liên lớp trung bình
-                            P_norm = F.normalize(P, p=2, dim=1)
-                            cos_sim_matrix = torch.matmul(P_norm, P_norm.T)
-                            wandb_log_dict["proto/inter_class_cos_sim"] = float(torch.mean(cos_sim_matrix[triu_indices[0], triu_indices[1]]).item())
-
-                        if len(valid_stds) > 0:
-                            S = torch.stack(valid_stds)
-                            wandb_log_dict["proto/mean_pooled_std"] = float(torch.mean(S).item())
-                    wandb.log(wandb_log_dict, step=self.current_round)
-            except Exception:
-                pass
-
-        self.current_round += 1
 
     def proto_aggregation(self, local_stats_dict=None):
         if local_stats_dict is None:

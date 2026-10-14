@@ -11,8 +11,7 @@ from utils.dlg import DLG
 
 import torch.nn.functional as F
 
-import copy
-import numpy as np
+from utils.wandb_utils import log_server_eval
 
 try:
     from torch.utils.tensorboard import SummaryWriter
@@ -267,11 +266,11 @@ class Server(object):
         stats = self.test_metrics()
         stats_train = self.train_metrics()
 
-        test_acc = sum(stats[2])*1.0 / sum(stats[1])
-        test_auc = sum(stats[3])*1.0 / sum(stats[1])
-        train_loss = sum(stats_train[2])*1.0 / sum(stats_train[1])
-        accs = [a / n for a, n in zip(stats[2], stats[1])]
-        aucs = [a / n for a, n in zip(stats[3], stats[1])]
+        test_acc = sum(stats[2])*1.0 / max(sum(stats[1]), 1)
+        test_auc = sum(stats[3])*1.0 / max(sum(stats[1]), 1)
+        train_loss = sum(stats_train[2])*1.0 / max(sum(stats_train[1]), 1)
+        accs = [a / max(n, 1) for a, n in zip(stats[2], stats[1])]
+        aucs = [a / max(n, 1) for a, n in zip(stats[3], stats[1])]
         
         if acc == None:
             self.rs_test_acc.append(test_acc)
@@ -294,19 +293,15 @@ class Server(object):
         print("Std Test Accurancy: {:.4f}".format(test_acc_std))
         print("Std Test AUC: {:.4f}".format(test_auc_std))
         
-        if self.args.log:
-            if self.writer is not None:
+        if getattr(self.args, 'log', False):
+            if hasattr(self, 'writer') and self.writer is not None:
                 self.writer.add_scalar("charts/train_loss", train_loss, self.current_round)
                 self.writer.add_scalar("charts/test_acc", test_acc, self.current_round)
                 self.writer.add_scalar("charts/test_auc", test_auc, self.current_round)
                 self.writer.add_scalar("charts/test_acc_std", test_acc_std, self.current_round)
                 self.writer.add_scalar("charts/test_auc_std", test_auc_std, self.current_round)
-            if wandb is not None:
-                wandb.log({"charts/train_loss": train_loss}, step=self.current_round)
-                wandb.log({"charts/test_acc": test_acc}, step=self.current_round)
-                wandb.log({"charts/test_auc": test_auc}, step=self.current_round)
-                wandb.log({"charts/test_acc_std": test_acc_std}, step=self.current_round)
-                wandb.log({"charts/test_auc_std": test_auc_std}, step=self.current_round)
+
+            log_server_eval(self, train_loss, test_acc, test_auc, test_acc_std, test_auc_std)
         
         self.current_round += 1
 

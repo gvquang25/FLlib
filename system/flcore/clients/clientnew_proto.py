@@ -5,10 +5,10 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import wandb
 
 from flcore.clients.clientbase import Client
 from utils.tsne_utils import plot_client_tsne
+from utils.wandb_utils import log_client_train
 
 
 class clientNewProto(Client):
@@ -313,18 +313,7 @@ class clientNewProto(Client):
                 proto_losses.append(loss_InfoNCE.item())
 
         # Ghi log WandB an toàn nếu cờ log được bật
-        if getattr(self.args, 'log', False):
-            try:
-                if wandb.run is not None:
-                    mean_ce = float(np.mean(ce_losses)) if ce_losses else 0.0
-                    mean_proto = float(np.mean(proto_losses)) if proto_losses else 0.0
-                    wandb.log({
-                        f"clients/client_{self.id}_train_loss": mean_ce,
-                        f"clients/client_{self.id}_loss_ce": mean_ce,
-                        f"clients/client_{self.id}_loss_infonce": mean_proto
-                    }, commit=False)
-            except Exception:
-                pass
+        log_client_train(self, ce_losses, extra_losses={"loss_infonce": proto_losses})
 
         # Cập nhật mean, std, count chính xác gửi lên server
         self.extract_local_stats(trainloader)
@@ -341,6 +330,5 @@ class clientNewProto(Client):
 
     def visualize_tsne(self, round_idx=0, max_samples=1000, save_dir="./tsne_resultsnewproto"):
         return plot_client_tsne(self, round_idx=round_idx, max_samples=max_samples, save_dir=save_dir)
-
 
 ClientNewProto = clientNewProto
