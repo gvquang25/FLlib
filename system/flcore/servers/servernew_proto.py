@@ -3,6 +3,7 @@ import torch
 
 from flcore.clients.clientnew_proto import clientNewProto
 from flcore.servers.serverbase import Server
+from utils.result_utils import print_experiment_config
 from utils.wandb_utils import log_server_summary
 
 ServerBase = Server
@@ -33,6 +34,9 @@ class FedNewProto(Server):
         self.global_stats = {}
 
     def train(self):
+        # In bảng tóm tắt cấu hình thực nghiệm và cài đặt Non-IID cố định ở đầu mỗi lượt chạy
+        print_experiment_config(self.args, self.times)
+
         for i in range(self.global_rounds + 1):
             s_t = time.time()
             self.selected_clients = self.select_clients()

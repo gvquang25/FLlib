@@ -43,49 +43,61 @@ class clientNewProto(Client):
         # 1.2 Tách Backbone (Encoder) và Classification Head
         self.encoder, self.head = self._split_model()
 
-        # 1.3 Cấu hình Optimizer an toàn
-        encoder_lr = getattr(args, 'encoder_lr', None)
+        # 1.3 Cấu hình Optimizer tách riêng cho Encoder và Head (theo lời mentor)
+        opt_cls = type(self.optimizer)
+        def_cfg = copy.deepcopy(self.optimizer.defaults)
+
         head_params = list(self.head.parameters())
+        enc_params = list(self.encoder.parameters())
 
-        if encoder_lr is None or encoder_lr <= 0 or len(head_params) == 0:
-            # Trường hợp mặc định: giữ nguyên self.optimizer gốc cho toàn model
-            self.opt_encoder = None
-            self.opt_encoder_scheduler = None
+        encoder_lr = getattr(args, 'encoder_lr', None)
+        enc_lr = float(encoder_lr) if (encoder_lr is not None and float(encoder_lr) > 0) else self.learning_rate
 
-            all_model_params = set(self.model.parameters())
-            current_opt_params = set(p for group in self.optimizer.param_groups for p in group['params'])
-            if current_opt_params != all_model_params:
-                opt_cls = type(self.optimizer)
-                cfg = copy.deepcopy(self.optimizer.defaults)
-                cfg['lr'] = self.learning_rate
-                self.optimizer = opt_cls(self.model.parameters(), **cfg)
-                if self.learning_rate_decay:
-                    sched_cls = type(self.learning_rate_scheduler) if hasattr(self, 'learning_rate_scheduler') and self.learning_rate_scheduler is not None else torch.optim.lr_scheduler.ExponentialLR
-                    gamma = getattr(self.args, 'learning_rate_decay_gamma', 0.99)
-                    self.learning_rate_scheduler = sched_cls(self.optimizer, gamma=gamma)
-        else:
-            # Chỉ khi encoder_lr hợp lệ (> 0) và head có tham số:
-            opt_cls = type(self.optimizer)
-            def_cfg = copy.deepcopy(self.optimizer.defaults)
-            enc_cfg, head_cfg = copy.deepcopy(def_cfg), copy.deepcopy(def_cfg)
-            enc_cfg['lr'] = float(encoder_lr)
-            head_cfg['lr'] = self.learning_rate
+        head_lr = getattr(args, 'head_lr', None)
+        h_lr = float(head_lr) if (head_lr is not None and float(head_lr) > 0) else self.learning_rate
 
-            self.opt_encoder = opt_cls(self.encoder.parameters(), **enc_cfg)
-            self.optimizer = opt_cls(self.head.parameters(), **head_cfg)
+        if len(head_params) > 0 and len(enc_params) > 0:
+            enc_cfg = copy.deepcopy(def_cfg)
+            head_cfg = copy.deepcopy(def_cfg)
+            enc_cfg['lr'] = enc_lr
+            head_cfg['lr'] = h_lr
+
+            self.opt_encoder = opt_cls(enc_params, **enc_cfg)
+            self.opt_head = opt_cls(head_params, **head_cfg)
+            self.optimizer = self.opt_head  # Giữ self.optimizer đồng bộ với opt_head cho Base Client
+            self.opt_base = self.opt_encoder
 
             opt_enc_params = set(p for group in self.opt_encoder.param_groups for p in group['params'])
-            opt_head_params = set(p for group in self.optimizer.param_groups for p in group['params'])
+            opt_head_params = set(p for group in self.opt_head.param_groups for p in group['params'])
             assert opt_enc_params.isdisjoint(opt_head_params), "Tham số của 2 optimizer không được trùng lặp!"
             assert (opt_enc_params | opt_head_params) == set(self.model.parameters()), "Hợp tham số 2 optimizer phải bằng toàn bộ tham số model!"
 
             if self.learning_rate_decay:
                 sched_cls = type(self.learning_rate_scheduler) if hasattr(self, 'learning_rate_scheduler') and self.learning_rate_scheduler is not None else torch.optim.lr_scheduler.ExponentialLR
                 gamma = getattr(self.args, 'learning_rate_decay_gamma', 0.99)
-                self.learning_rate_scheduler = sched_cls(self.optimizer, gamma=gamma)
+                self.learning_rate_scheduler = sched_cls(self.opt_head, gamma=gamma)
+                self.opt_head_scheduler = self.learning_rate_scheduler
                 self.opt_encoder_scheduler = sched_cls(self.opt_encoder, gamma=gamma)
             else:
                 self.opt_encoder_scheduler = None
+                self.opt_head_scheduler = None
+        elif len(head_params) == 0:
+            # Fallback nếu head không có trainable params (nn.Identity)
+            enc_cfg = copy.deepcopy(def_cfg)
+            enc_cfg['lr'] = enc_lr
+            self.opt_encoder = opt_cls(enc_params, **enc_cfg)
+            self.opt_head = None
+            self.optimizer = self.opt_encoder
+            self.opt_base = self.opt_encoder
+            if self.learning_rate_decay:
+                sched_cls = type(self.learning_rate_scheduler) if hasattr(self, 'learning_rate_scheduler') and self.learning_rate_scheduler is not None else torch.optim.lr_scheduler.ExponentialLR
+                gamma = getattr(self.args, 'learning_rate_decay_gamma', 0.99)
+                self.learning_rate_scheduler = sched_cls(self.opt_encoder, gamma=gamma)
+                self.opt_encoder_scheduler = self.learning_rate_scheduler
+                self.opt_head_scheduler = None
+            else:
+                self.opt_encoder_scheduler = None
+                self.opt_head_scheduler = None
 
     def _split_model(self):
         """
@@ -290,22 +302,57 @@ class clientNewProto(Client):
                 if self.train_slow:
                     time.sleep(0.1 * np.abs(np.random.rand()))
 
-                rep, out = self.extract_features(x)
-                loss_ce = self.loss(out, y)
+                # Lấy input tensor
+                x_input = x[0] if isinstance(x, list) else x
 
+                # Trích xuất đặc trưng từ Encoder (model.base)
+                feats = self.encoder(x_input)
+                rep = feats.view(feats.size(0), -1)
+
+                # 1. Forward Head với feats.detach() để cập nhật Classifier Head thuần túy bằng CE Loss
+                # Đúng theo lời mentor: ngắt gradient để proto loss không làm biến dạng ranh giới phân loại của Head
+                try:
+                    output = self.head(feats.detach())
+                except (RuntimeError, ValueError):
+                    output = self.head(rep.detach())
+                loss_ce = self.loss(output, y)
+
+                # 2. Forward Head với feats (giữ computation graph) để Encoder nhận tín hiệu phân loại L_ce
+                # Đúng theo lời mentor: Encoder cập nhật kết hợp giữa L_ce và L_proto
+                try:
+                    output_enc = self.head(feats)
+                except (RuntimeError, ValueError):
+                    output_enc = self.head(rep)
+                loss_ce_enc = self.loss(output_enc, y)
+
+                # 3. Proto loss tác động trực tiếp vào feats (Encoder)
                 loss_InfoNCE = self.compute_fpl_loss(rep, y, cache) if cache else None
                 if loss_InfoNCE is None:
                     loss_InfoNCE = 0.0 * loss_ce
 
-                loss_total = loss_ce + self.lamda_proto * loss_InfoNCE
+                # Encoder kết hợp giữa L_ce và L_proto
+                loss_encoder = loss_ce_enc + self.lamda_proto * loss_InfoNCE
 
-                self.optimizer.zero_grad()
+                # Zero gradients cho cả 2 optimizer
+                if self.opt_head is not None:
+                    self.opt_head.zero_grad()
                 if self.opt_encoder is not None:
                     self.opt_encoder.zero_grad()
 
-                loss_total.backward()
+                # Cập nhật Head: thuần túy bằng L_ce
+                if self.opt_head is not None:
+                    loss_ce.backward()
 
-                self.optimizer.step()
+                # Cập nhật Encoder: kết hợp giữa L_ce và L_proto
+                # Sử dụng inputs=list(self.encoder.parameters()) để gradient từ loss_encoder
+                # CHỈ truyền vào Encoder, hoàn toàn không làm tràn gradient hay biến dạng Head
+                if self.opt_encoder is not None:
+                    enc_params = list(self.encoder.parameters())
+                    loss_encoder.backward(inputs=enc_params)
+
+                # Step từng optimizer riêng biệt
+                if self.opt_head is not None:
+                    self.opt_head.step()
                 if self.opt_encoder is not None:
                     self.opt_encoder.step()
 

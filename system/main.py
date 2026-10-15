@@ -595,7 +595,7 @@ from flcore.trainmodel.resnet import *
 from flcore.trainmodel.alexnet import *
 from flcore.trainmodel.mobilenet_v2 import *
 
-from utils.result_utils import average_data
+from utils.result_utils import average_data, print_experiment_config
 from utils.mem_utils import MemReporter
 
 logger = logging.getLogger()
@@ -885,6 +885,7 @@ def run(args):
         else:
             raise NotImplementedError
 
+        print_experiment_config(args, i)
         server.train()
 
         time_list.append(time.time() - start)
