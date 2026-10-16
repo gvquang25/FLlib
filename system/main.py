@@ -547,6 +547,7 @@ import warnings
 import numpy as np
 import torchvision
 import logging
+import random
 
 from flcore.servers.serveravg import FedAvg
 from flcore.servers.serverlag import FedLAG
@@ -602,7 +603,17 @@ logger = logging.getLogger()
 logger.setLevel(logging.ERROR)
 
 warnings.simplefilter("ignore")
-torch.manual_seed(0)
+
+
+def set_seed(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+
 
 # hyper-params for Text tasks
 vocab_size = 98635
@@ -617,8 +628,14 @@ def run(args):
     model_str = args.model
     args.model_str = model_str
 
+    base_seed = args.seed if args.seed is not None else (int(time.time() * 1000) % 1000000)
+
     for i in range(args.prev, args.times):
-        print(f"\n============= Running time: {i}th =============")
+        current_seed = base_seed + i
+        set_seed(current_seed)
+        args.current_seed = current_seed
+
+        print(f"\n============= Running time: {i}th (Seed: {current_seed}) =============")
         print("Creating server and clients ...")
         start = time.time()
 
@@ -864,7 +881,7 @@ def run(args):
             # Khởi tạo trực tiếp FedVTC, giữ nguyên kiến trúc mô hình không bị chia tách
             server = FedVTC(args, i)
 
-        elif args.algorithm in ["FPL", "fpl"]:
+        elif args.algorithm in ["FPL", "fpl", "FedFPL", "fedfpl"]:
             args.head = copy.deepcopy(args.model.fc)
             args.model.fc = nn.Identity()
             args.model = BaseHeadSplit(args.model, args.head)
@@ -914,6 +931,7 @@ if __name__ == "__main__":
     parser.add_argument('-lbs', "--batch_size", type=int, default=10)
     parser.add_argument('-lr', "--local_learning_rate", type=float, default=0.005,
                         help="Local learning rate")
+    parser.add_argument('-tbs', '--test_batch_size', type=int, default=512, help="Test batch size")
     parser.add_argument('-ld', "--learning_rate_decay", type=bool, default=False)
     parser.add_argument('-ldg', "--learning_rate_decay_gamma", type=float, default=0.99)
     parser.add_argument('-gr', "--global_rounds", type=int, default=2000)
@@ -1044,6 +1062,12 @@ if __name__ == "__main__":
     parser.add_argument('--eval_mode', type=str, default='head', choices=['head', 'proto'],
                         help="Evaluation mode: 'head' (classifier head) or 'proto' (Mahalanobis metric)")
 
+    # Seed & Data Loader
+    parser.add_argument('-sd', "--seed", type=int, default=None,
+                        help="Random seed for model initialization and training (default: None for dynamic seed each run)")
+    parser.add_argument('--shuffle', action='store_true',
+                        help="Shuffle training data in client local DataLoader")
+
     args = parser.parse_args()
 
     args.device = torch.device("cuda" if torch.cuda.is_available() else "cpu", index=args.device_id)
@@ -1064,6 +1088,8 @@ if __name__ == "__main__":
     if args.time_select:
         print("Time threthold: {}".format(args.time_threthold))
     print("Running times: {}".format(args.times))
+    print("Seed: {}".format(args.seed if args.seed is not None else "Dynamic / Random"))
+    print("Shuffle train data: {}".format(args.shuffle))
     print("Dataset: {}".format(args.dataset))
     print("Number of classes: {}".format(args.num_classes))
     print("Backbone: {}".format(args.model))

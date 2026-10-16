@@ -4,7 +4,9 @@ import torch
 
 try:
     import wandb
-except ImportError:
+    if not hasattr(wandb, 'init'):
+        wandb = None
+except (ImportError, Exception):
     wandb = None
 
 from flcore.clients.clientprotostd import clientProtoStd
