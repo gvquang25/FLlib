@@ -588,6 +588,7 @@ from flcore.servers.serverprotostd import FedProtoStd
 from flcore.servers.serverfpl import serverFPL
 from flcore.servers.servernew import FedNew
 from flcore.servers.servernew_proto import FedNewProto
+from flcore.servers.servernew_pcl import FedNewPCL
 
 from flcore.trainmodel.models import *
 
@@ -899,6 +900,12 @@ def run(args):
             args.model = BaseHeadSplit(args.model, args.head)
             server = FedNewProto(args, i)
 
+        elif args.algorithm in ["FedNewPCL", "fednewpcl", "NewPCL", "newpcl"]:
+            args.head = copy.deepcopy(args.model.fc)
+            args.model.fc = nn.Identity()
+            args.model = BaseHeadSplit(args.model, args.head)
+            server = FedNewPCL(args, i)
+
         else:
             raise NotImplementedError
 
@@ -1051,6 +1058,11 @@ if __name__ == "__main__":
                         help="Separate learning rate for the encoder/backbone (default None: shared optimizer)")
     parser.add_argument('--tsne_gap', type=int, default=None, 
                         help="Interval for t-SNE visualization (None or <= 0 defaults to eval_gap)")
+    # FedNewPCL Hyperparameters
+    parser.add_argument('--proto_momentum', type=float, default=0.5,
+                        help="Momentum EMA coefficient for PCL prototype update (default: 0.5)")
+    parser.add_argument('--lamda_ins', type=float, default=0.1,
+                        help="Weight for intra-batch instance contrastive loss in FedNewPCL (default: 0.1)")
 
     # FedProtoStd Hyperparameters
     parser.add_argument('--lamda_align', type=float, default=1.0,
