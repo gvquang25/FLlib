@@ -20,7 +20,9 @@ except ImportError:
 
 try:
     import wandb
-except ImportError:
+    if not hasattr(wandb, 'init'):
+        wandb = None
+except (ImportError, Exception):
     wandb = None
 
 
@@ -77,9 +79,12 @@ class Server(object):
         self.eval_new_clients = False
         self.fine_tuning_epoch = args.fine_tuning_epoch
         self.current_round = 0
+        self.save_dir = None
+        self.writer = None
         
-        if self.args.log:
-            args.run_name = f"{args.algorithm}__{args.dataset}__{args.num_clients}__{int(time.time())}"
+        if getattr(self.args, 'log', False) or getattr(self.args, 'use_wandb', False):
+            args.run_name = f"{args.algorithm}__{args.dataset}__{args.num_clients}__run_{times}__{int(time.time())}"
+            self.save_dir = f"runs/{args.run_name}"
             
             if SummaryWriter is not None:
                 self.writer = SummaryWriter(self.save_dir)
@@ -91,12 +96,51 @@ class Server(object):
                 self.writer = None
             
             # Khởi tạo phiên WandB
-            wandb.init(
-                project="PFLA",
-                config=args,
-                name=args.run_name,
-                force=True
-            )
+            if wandb is not None:
+                try:
+                    wandb.init(
+                        project="PFLA",
+                        config=args,
+                        name=args.run_name,
+                        reinit=True,
+                        force=True
+                    )
+                except Exception as e:
+                    print(f"Warning: Failed to initialize WandB: {e}")
+
+        # Khởi tạo Global Test Loader cho CIFAR-10 (10.000 ảnh test gốc)
+        self.global_testloader = None
+        self.rs_global_test_acc = []
+        if getattr(self, 'dataset', '').lower() == 'cifar10':
+            try:
+                import torchvision
+                import torchvision.transforms as transforms
+                from torch.utils.data import DataLoader
+
+                transform = transforms.Compose([
+                    transforms.ToTensor(),
+                    transforms.Normalize(mean=(0.4914, 0.4822, 0.4465), std=(0.2023, 0.1994, 0.2010))
+                ])
+
+                data_dir = getattr(self.args, 'data_dir', None)
+                if not data_dir or not os.path.exists(data_dir):
+                    if os.path.exists('../dataset/Cifar10/rawdata/cifar-10-batches-py'):
+                        data_dir = '../dataset/Cifar10/rawdata'
+                    elif os.path.exists('./data/Cifar10'):
+                        data_dir = './data/Cifar10'
+                    else:
+                        data_dir = getattr(self.args, 'data_dir', './data/Cifar10')
+
+                try:
+                    testset = torchvision.datasets.CIFAR10(root=data_dir, train=False, download=False, transform=transform)
+                except Exception:
+                    testset = torchvision.datasets.CIFAR10(root=data_dir, train=False, download=True, transform=transform)
+
+                test_bs = getattr(self.args, 'test_batch_size', getattr(self.args, 'batch_size', 128))
+                self.global_testloader = DataLoader(testset, batch_size=test_bs, shuffle=False, drop_last=False)
+            except Exception as e:
+                self.global_testloader = None
+                print(f"Warning: Failed to load CIFAR-10 global test set: {e}")
 
     def set_clients(self, clientObj):
         for i, train_slow, send_slow in zip(range(self.num_clients), self.train_slow_clients, self.send_slow_clients):
@@ -219,6 +263,11 @@ class Server(object):
                 hf.create_dataset('rs_test_acc', data=self.rs_test_acc)
                 hf.create_dataset('rs_test_auc', data=self.rs_test_auc)
                 hf.create_dataset('rs_train_loss', data=self.rs_train_loss)
+                if hasattr(self, 'rs_global_test_acc') and len(self.rs_global_test_acc):
+                    hf.create_dataset('rs_global_test_acc', data=self.rs_global_test_acc)
+
+        if hasattr(self, 'writer') and self.writer is not None:
+            self.writer.close()
 
     def save_item(self, item, item_name):
         if not os.path.exists(self.save_folder_name):
@@ -303,7 +352,72 @@ class Server(object):
 
             log_server_eval(self, train_loss, test_acc, test_auc, test_acc_std, test_auc_std)
         
+        self.evaluate_global()
+
         self.current_round += 1
+
+    def evaluate_global(self):
+        if getattr(self, 'global_testloader', None) is None:
+            return
+
+        client_accs = []
+        for c in self.clients:
+            c.model.eval()
+            correct = 0
+            total = 0
+            with torch.no_grad():
+                for x, y in self.global_testloader:
+                    if isinstance(x, list):
+                        x = x[0].to(self.device)
+                    else:
+                        x = x.to(self.device)
+                    y = y.to(self.device)
+
+                    if hasattr(c, 'model') and callable(c.model):
+                        try:
+                            output = c.model(x)
+                        except (RuntimeError, ValueError):
+                            if hasattr(c, 'encoder') and hasattr(c, 'head'):
+                                rep = c.encoder(x)
+                                output = c.head(rep.view(rep.size(0), -1))
+                            elif hasattr(c.model, 'base') and hasattr(c.model, 'head'):
+                                rep = c.model.base(x)
+                                output = c.model.head(rep.view(rep.size(0), -1))
+                            else:
+                                raise
+                    elif hasattr(c, 'encoder') and hasattr(c, 'head'):
+                        rep = c.encoder(x)
+                        output = c.head(rep.view(rep.size(0), -1))
+                    elif hasattr(c, 'base') and hasattr(c, 'head'):
+                        rep = c.base(x)
+                        output = c.head(rep.view(rep.size(0), -1))
+                    else:
+                        raise NotImplementedError("Cannot forward model for client")
+
+                    preds = torch.argmax(output, dim=1)
+                    correct += (preds == y).sum().item()
+                    total += y.size(0)
+
+            client_acc = correct / max(total, 1)
+            client_accs.append(client_acc)
+
+        mean_acc = float(np.mean(client_accs))
+        std_acc = float(np.std(client_accs))
+
+        if hasattr(self, 'rs_global_test_acc'):
+            self.rs_global_test_acc.append(mean_acc)
+
+        print(f"[*] Averaged Global Test Accuracy: {mean_acc:.4f} (Std: {std_acc:.4f})")
+
+        if getattr(self.args, 'log', False):
+            if hasattr(self, 'writer') and self.writer is not None:
+                self.writer.add_scalar("charts/global_test_acc", mean_acc, self.current_round)
+                self.writer.add_scalar("charts/global_test_acc_std", std_acc, self.current_round)
+            if wandb is not None and wandb.run is not None:
+                wandb.log({
+                    "charts/global_test_acc": mean_acc,
+                    "charts/global_test_acc_std": std_acc
+                }, step=self.current_round)
 
     def print_(self, test_acc, test_auc, train_loss):
         print("Average Test Accurancy: {:.4f}".format(test_acc))

@@ -58,6 +58,8 @@ def print_experiment_config(args, times_idx=None):
     device = str(getattr(args, 'device', 'cpu'))
     times = getattr(args, 'times', 1)
     run_str = f"Run {times_idx + 1}/{times} (Time index: {times_idx})" if times_idx is not None else f"Total runs: {times}"
+    seed_val = getattr(args, 'current_seed', getattr(args, 'seed', 'N/A'))
+    shuffle_flag = getattr(args, 'shuffle', False)
 
     noniid = getattr(args, 'noniid', False)
     dist_str = "Non-IID (Dirichlet partition)" if noniid else "IID (Uniform partition)"
@@ -94,7 +96,9 @@ def print_experiment_config(args, times_idx=None):
         f"  * Dataset          : {dataset} ({num_classes} classes)",
         f"  * Backbone      : {model}",
         f"  * Device    : {device}",
-        f"  * Current Run / Seed: {run_str}",
+        f"  * Current Run       : {run_str}",
+        f"  * Random Seed       : {seed_val}",
+        f"  * Shuffle Train     : {'Enabled' if shuffle_flag else 'Disabled'}",
         sep_light,
         " [2] NON-IID SETTINGS",
         f"  * Distribution: {dist_str}",
@@ -124,12 +128,16 @@ def print_experiment_config(args, times_idx=None):
     if log_flag:
         try:
             import wandb
+            if not hasattr(wandb, 'init'):
+                wandb = None
             if wandb is not None and wandb.run is not None:
                 wandb.config.update({
                     "summary/algorithm": algo,
                     "summary/dataset": dataset,
                     "summary/model": str(model),
                     "summary/run_index": times_idx,
+                    "summary/seed": seed_val,
+                    "summary/shuffle": shuffle_flag,
                     "summary/distribution": dist_str,
                     "summary/alpha_dirich": alpha,
                     "summary/balance": balance,

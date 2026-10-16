@@ -6,7 +6,12 @@ import torch.nn as nn
 from flcore.clients.clientfpl import clientFPL
 from flcore.servers.serverbase import Server
 from utils.finch import FINCH
-import wandb
+try:
+    import wandb
+    if not hasattr(wandb, 'init'):
+        wandb = None
+except (ImportError, Exception):
+    wandb = None
 
 
 def proto_aggregation(uploaded_protos):
@@ -125,7 +130,8 @@ class serverFPL(Server):
 
         if self.args.log:
             self.writer.flush()
-            wandb.finish()
+            if wandb is not None:
+                wandb.finish()
 
         if self.num_new_clients > 0:
             self.eval_new_clients = True

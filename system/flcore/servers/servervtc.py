@@ -6,7 +6,9 @@ from torch.utils.data import TensorDataset
 from collections import OrderedDict
 try:
     import wandb
-except ImportError:
+    if not hasattr(wandb, 'init'):
+        wandb = None
+except (ImportError, Exception):
     wandb = None
 
 from flcore.servers.serverbase import Server
