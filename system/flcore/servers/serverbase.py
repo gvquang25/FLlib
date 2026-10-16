@@ -11,7 +11,7 @@ from utils.dlg import DLG
 
 import torch.nn.functional as F
 
-from utils.wandb_utils import log_server_eval
+from utils.wandb_utils import log_server_eval, log_server_summary
 
 try:
     from torch.utils.tensorboard import SummaryWriter
@@ -63,6 +63,7 @@ class Server(object):
         self.rs_test_acc = []
         self.rs_test_auc = []
         self.rs_train_loss = []
+        self.rs_client_test_acc = {}
 
         self.times = times
         self.eval_gap = args.eval_gap
@@ -265,6 +266,15 @@ class Server(object):
                 hf.create_dataset('rs_train_loss', data=self.rs_train_loss)
                 if hasattr(self, 'rs_global_test_acc') and len(self.rs_global_test_acc):
                     hf.create_dataset('rs_global_test_acc', data=self.rs_global_test_acc)
+                if hasattr(self, 'rs_client_test_acc') and len(self.rs_client_test_acc):
+                    try:
+                        sorted_ids = sorted(self.rs_client_test_acc.keys())
+                        client_matrix = np.array([self.rs_client_test_acc[k] for k in sorted_ids])
+                        hf.create_dataset('rs_client_test_acc', data=client_matrix)
+                    except Exception:
+                        pass
+
+        log_server_summary(self)
 
         if hasattr(self, 'writer') and self.writer is not None:
             self.writer.close()
@@ -342,6 +352,15 @@ class Server(object):
         print("Std Test Accurancy: {:.4f}".format(test_acc_std))
         print("Std Test AUC: {:.4f}".format(test_auc_std))
         
+        client_accs = {c_id: acc for c_id, acc in zip(stats[0], accs)}
+        self.current_client_accs = client_accs
+        if not hasattr(self, 'rs_client_test_acc'):
+            self.rs_client_test_acc = {}
+        for c_id, c_acc in client_accs.items():
+            if c_id not in self.rs_client_test_acc:
+                self.rs_client_test_acc[c_id] = []
+            self.rs_client_test_acc[c_id].append(c_acc)
+
         if getattr(self.args, 'log', False):
             if hasattr(self, 'writer') and self.writer is not None:
                 self.writer.add_scalar("charts/train_loss", train_loss, self.current_round)
@@ -349,8 +368,11 @@ class Server(object):
                 self.writer.add_scalar("charts/test_auc", test_auc, self.current_round)
                 self.writer.add_scalar("charts/test_acc_std", test_acc_std, self.current_round)
                 self.writer.add_scalar("charts/test_auc_std", test_auc_std, self.current_round)
+                for c_id, c_acc in client_accs.items():
+                    self.writer.add_scalar(f"clients/client_{c_id}_test_acc", c_acc, self.current_round)
+                    self.writer.add_scalar(f"clients_acc/client_{c_id}", c_acc, self.current_round)
 
-            log_server_eval(self, train_loss, test_acc, test_auc, test_acc_std, test_auc_std)
+            log_server_eval(self, train_loss, test_acc, test_auc, test_acc_std, test_auc_std, client_accs=client_accs)
         
         self.evaluate_global()
 
@@ -413,11 +435,16 @@ class Server(object):
             if hasattr(self, 'writer') and self.writer is not None:
                 self.writer.add_scalar("charts/global_test_acc", mean_acc, self.current_round)
                 self.writer.add_scalar("charts/global_test_acc_std", std_acc, self.current_round)
+                for c, acc in zip(self.clients, client_accs):
+                    self.writer.add_scalar(f"clients/client_{c.id}_global_test_acc", acc, self.current_round)
             if wandb is not None and wandb.run is not None:
-                wandb.log({
+                global_log = {
                     "charts/global_test_acc": mean_acc,
                     "charts/global_test_acc_std": std_acc
-                }, step=self.current_round)
+                }
+                for c, acc in zip(self.clients, client_accs):
+                    global_log[f"clients/client_{c.id}_global_test_acc"] = float(acc)
+                wandb.log(global_log, step=self.current_round)
 
     def print_(self, test_acc, test_auc, train_loss):
         print("Average Test Accurancy: {:.4f}".format(test_acc))

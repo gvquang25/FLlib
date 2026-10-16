@@ -173,6 +173,7 @@ class FedProtoStd(Server):
         print("Averaged Test AUC: {:.4f}".format(test_auc))
         print("Std Test Accuracy: {:.4f}".format(test_acc_std))
 
+        client_accs = {c_id: acc for c_id, acc in zip(stats[0], accs)}
         # Log metrics to TensorBoard and WandB
         if getattr(self.args, 'log', False):
             if hasattr(self, 'writer') and self.writer is not None:
@@ -180,11 +181,18 @@ class FedProtoStd(Server):
                 self.writer.add_scalar("charts/test_acc", test_acc, self.current_round)
                 self.writer.add_scalar("charts/test_auc", test_auc, self.current_round)
                 self.writer.add_scalar("charts/test_acc_std", test_acc_std, self.current_round)
+                for c_id, c_acc in client_accs.items():
+                    self.writer.add_scalar(f"clients/client_{c_id}_test_acc", c_acc, self.current_round)
+                    self.writer.add_scalar(f"clients_acc/client_{c_id}", c_acc, self.current_round)
 
             if wandb is not None:
-                wandb.log({
+                wandb_log = {
                     "charts/train_loss": train_loss,
                     "charts/test_acc": test_acc,
                     "charts/test_auc": test_auc,
                     "charts/test_acc_std": test_acc_std,
-                }, step=self.current_round)
+                }
+                for c_id, c_acc in client_accs.items():
+                    wandb_log[f"clients/client_{c_id}_test_acc"] = float(c_acc)
+                    wandb_log[f"clients_acc/client_{c_id}"] = float(c_acc)
+                wandb.log(wandb_log, step=self.current_round)
