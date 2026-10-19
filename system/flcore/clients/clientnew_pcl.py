@@ -61,8 +61,8 @@ class clientNewPCL(Client):
         v_virt_local = getattr(args, 'lamda_virt_local', 0.05)
         self.lamda_virt_local = 0.05 if v_virt_local is None else float(v_virt_local)
 
-        v_virt_global = getattr(args, 'lamda_virt_global', 0.0)
-        self.lamda_virt_global = 0.0 if v_virt_global is None else float(v_virt_global)
+        v_virt_global = getattr(args, 'lamda_virt_global', 0.03)
+        self.lamda_virt_global = 0.03 if v_virt_global is None else float(v_virt_global)
 
         # 1.2 Tách Backbone (Encoder) và Classification Head
         self.encoder, self.head = self._split_model()
