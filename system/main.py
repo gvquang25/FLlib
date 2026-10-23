@@ -1054,15 +1054,33 @@ if __name__ == "__main__":
                         help="Weight coefficient for prototype loss (InfoNCE + MSE); set to 0.0 to disable")
     parser.add_argument('--proto_warmup', type=int, default=1, 
                         help="Number of warmup rounds before applying prototype loss (default 1: skip round 0)")
+    parser.add_argument('--proto_rampup', type=int, default=5, 
+                        help="Ramp-up rounds for prototype loss (default: 5)")
     parser.add_argument('--encoder_lr', type=float, default=None, 
                         help="Separate learning rate for the encoder/backbone (default None: shared optimizer)")
     parser.add_argument('--tsne_gap', type=int, default=None, 
                         help="Interval for t-SNE visualization (None or <= 0 defaults to eval_gap)")
     # FedNewPCL Hyperparameters
-    parser.add_argument('--proto_momentum', type=float, default=0.5,
-                        help="Momentum EMA coefficient for PCL prototype update (default: 0.5)")
-    parser.add_argument('--lamda_ins', type=float, default=0.1,
-                        help="Weight for intra-batch instance contrastive loss in FedNewPCL (default: 0.1)")
+    parser.add_argument('--proto_momentum', type=float, default=0.1,
+                        help="Momentum EMA coefficient for PCL prototype update (default: 0.1)")
+    parser.add_argument('--lamda_ins', type=float, default=0.05,
+                        help="Weight for intra-batch instance contrastive loss in FedNewPCL (default: 0.05)")
+    parser.add_argument('--proj_mode', type=str, default='shared', choices=['class', 'shared'],
+                        help="Projection hypersphere mode: class-specific or shared")
+    parser.add_argument('--phi_range', type=float, default=0.1,
+                        help="Dynamic temperature clipping range")
+    parser.add_argument('--lamda_virt_local', type=float, default=0.15,
+                        help="Local virtual feature regularization weight")
+    parser.add_argument('--lamda_virt_global', type=float, default=0.05,
+                        help="Global virtual feature regularization weight")
+    parser.add_argument('--pcl_aug', type=int, default=1,
+                        help="Enable GPU contrastive view augmentation (1: True, 0: False)")
+    parser.add_argument('--mixup_alpha', type=float, default=0.2,
+                        help="Feature manifold mixup alpha for classifier head")
+    parser.add_argument('--bayes_shrink', type=float, default=0.25,
+                        help="Max Empirical Bayes shrinkage weight for local prototype")
+
+    # FedProtoStd Hyperparameters
 
     # FedProtoStd Hyperparameters
     parser.add_argument('--lamda_align', type=float, default=1.0,

@@ -29,8 +29,9 @@ class FedNewPCL(Server):
         self.set_clients(clientNewPCL)
 
         # Tham số Momentum EMA và nhiệt độ cơ sở của PCL
-        self.pcl_momentum = getattr(args, 'proto_momentum', 0.5)
+        self.pcl_momentum = getattr(args, 'proto_momentum', 0.1)
         self.base_temperature = getattr(args, 'infoNCET', 0.1)
+        self.phi_range = getattr(args, 'phi_range', 0.1)
 
         print(f"\nJoin ratio / total clients: {self.join_ratio} / {self.num_clients}")
         print("Finished creating FedNewPCL server and clients.")
@@ -44,9 +45,30 @@ class FedNewPCL(Server):
         print_experiment_config(self.args, self.times)
 
         for i in range(self.global_rounds + 1):
+            self.current_round = i
             s_t = time.time()
             self.selected_clients = self.select_clients()
 
+            # 1. Clients huấn luyện cục bộ (M-Step)
+            for client in self.selected_clients:
+                client.train()
+
+            # 2. Nhận stats từ clients vừa huấn luyện
+            self.receive_protos()
+
+            # 3. Server tổng hợp E-Step phân tán dựa trên thuật toán PCL
+            self.global_stats = proto_aggregation_pcl(
+                self.uploaded_stats,
+                prev_global_stats=self.global_stats,
+                momentum=self.pcl_momentum,
+                base_tau=self.base_temperature,
+                phi_range=self.phi_range
+            )
+
+            # 4. Phân phối global stats (mean, std, phi, count) xuống tất cả clients
+            self.send_protos()
+
+            # 5. Đánh giá và trực quan hóa sau khi hoàn tất vòng huấn luyện
             if i % self.eval_gap == 0:
                 print(f"\n-------------Round number: {i}-------------")
                 print("\nEvaluate personalized models")
@@ -59,29 +81,17 @@ class FedNewPCL(Server):
 
                 self.evaluate()
 
-            # 1. Clients thực hiện M-Step huấn luyện cục bộ trước (tránh thu thập nhiễu ngẫu nhiên ở Round 0)
-            for client in self.selected_clients:
-                client.train()
-
-            # 2. Nhận thống kê cục bộ MỚI NHẤT vừa huấn luyện xong từ các client
-            self.receive_protos()
-
-            # 3. Server tổng hợp E-Step phân tán dựa trên thuật toán PCL
-            self.global_stats = proto_aggregation_pcl(
-                self.uploaded_stats,
-                prev_global_stats=self.global_stats,
-                momentum=self.pcl_momentum,
-                base_tau=self.base_temperature
-            )
-
-            # 4. Phân phối global stats (mean, std, phi, count) xuống tất cả clients cho round kế tiếp
-            self.send_protos()
-
             self.Budget.append(time.time() - s_t)
             print('-' * 50, self.Budget[-1])
 
             if self.auto_break and self.check_done(acc_lss=[self.rs_test_acc], top_cnt=self.top_cnt):
                 break
+
+        # Đảm bảo mô hình sau round cuối luôn được evaluate nếu chưa được đánh giá
+        if (self.global_rounds % self.eval_gap != 0):
+            self.current_round = self.global_rounds
+            print(f"\n-------------Final Evaluation at Round: {self.global_rounds}-------------")
+            self.evaluate()
 
         print("\nBest accuracy.")
         print(max(self.rs_test_acc))
@@ -117,28 +127,29 @@ class FedNewPCL(Server):
             local_stats_dict,
             prev_global_stats=self.global_stats,
             momentum=self.pcl_momentum,
-            base_tau=self.base_temperature
+            base_tau=self.base_temperature,
+            phi_range=self.phi_range
         )
         return self.global_stats
 
     aggregate_prototypes_and_stds = proto_aggregation
 
 
-def proto_aggregation_pcl(local_stats_list, prev_global_stats=None, momentum=0.5, base_tau=0.1):
+def proto_aggregation_pcl(local_stats_list, prev_global_stats=None, momentum=0.1, base_tau=0.1, phi_range=0.1):
     """
     Thuật toán E-Step phân tán tổng hợp Prototype và ước lượng nồng độ cụm theo PCL:
     1. Weighted Mean & Pooled Variance từ local_stats của các client tải lên:
        batch_mean = sum(n_k * mean_k) / sum(n_k)
        pooled_var = sum(n_k * (std_k^2 + (mean_k - batch_mean)^2)) / sum(n_k)
        batch_std  = sqrt(clamp(pooled_var, min=1e-8))
-    2. Momentum Prototype & Variance Update (kế thừa cơ chế EMA từ pcl/builder.py):
-       final_mean = momentum * prev_mean + (1.0 - momentum) * batch_mean
-       final_std  = momentum * prev_std  + (1.0 - momentum) * batch_std
+    2. Momentum Prototype & Variance Update (EMA với hệ số cập nhật mẫu mới momentum):
+       final_mean = (1.0 - momentum) * prev_mean + momentum * batch_mean
+       final_std  = (1.0 - momentum) * prev_std  + momentum * batch_std
        Bảo toàn thống kê của các lớp không có mẫu trong round (batch_count == 0) từ prev_global_stats.
     3. PCL Concentration Estimation phi (chuyển đổi từ hàm run_kmeans trong main_pcl.py):
        raw_phi_c = torch.norm(final_std, p=2) / log(total_count + 10.0)
        scaled_phi = base_tau * (raw_phi_c / max(mean_raw_phi, 1e-6))
-       phi_c = clip(scaled_phi, 0.5 * base_tau, 2.0 * base_tau)
+       phi_c = clip(scaled_phi, (1.0 - phi_range) * base_tau, (1.0 + phi_range) * base_tau)
        global_stats[c] = {'mean': final_mean, 'std': final_std, 'phi': phi_c, 'count': total_count}
     """
     if isinstance(local_stats_list, dict):
@@ -204,9 +215,9 @@ def proto_aggregation_pcl(local_stats_list, prev_global_stats=None, momentum=0.5
                 prev_mean = prev_global_stats[c]['mean'].float().cpu()
                 prev_std = prev_global_stats[c]['std'].float().cpu()
                 prev_count = float(prev_global_stats[c].get('count', batch_count))
-                final_mean = momentum * prev_mean + (1.0 - momentum) * batch_mean
-                final_std = momentum * prev_std + (1.0 - momentum) * batch_std
-                total_count = int(round(momentum * prev_count + (1.0 - momentum) * batch_count))
+                final_mean = (1.0 - momentum) * prev_mean + momentum * batch_mean
+                final_std = (1.0 - momentum) * prev_std + momentum * batch_std
+                total_count = int(round((1.0 - momentum) * prev_count + momentum * batch_count))
             else:
                 final_mean = batch_mean
                 final_std = batch_std
@@ -256,7 +267,7 @@ def proto_aggregation_pcl(local_stats_list, prev_global_stats=None, momentum=0.5
         for c in global_stats:
             if raw_phi_dict.get(c) is not None:
                 scaled_phi = base_tau * (raw_phi_dict[c] / max(mean_raw_phi, 1e-6))
-                phi_c = float(np.clip(scaled_phi, 0.5 * base_tau, 2.0 * base_tau))
+                phi_c = float(np.clip(scaled_phi, (1.0 - phi_range) * base_tau, (1.0 + phi_range) * base_tau))
                 global_stats[c]['phi'] = phi_c
             else:
                 global_stats[c]['phi'] = float(base_tau)
