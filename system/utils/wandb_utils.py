@@ -53,7 +53,7 @@ def log_client_eval(client, test_acc, step=None):
         pass
 
 
-def log_server_eval(server, train_loss, test_acc, test_auc, test_acc_std, test_auc_std, client_accs=None):
+def log_server_eval(server, train_loss, test_acc, test_auc, test_acc_std, test_auc_std, client_accs=None, extra_metrics=None):
     """
     Ghi log các chỉ số đánh giá của server lên WandB:
     - Accuracy, Loss, AUC, Std
@@ -62,6 +62,7 @@ def log_server_eval(server, train_loss, test_acc, test_auc, test_acc_std, test_a
       + proto/inter_class_l2_dist
       + proto/inter_class_cos_sim
       + proto/mean_pooled_std
+    - Ghi log thêm các chỉ số motivation_metrics (Prototype Margin, Bhattacharyya Overlap)
     """
     if not getattr(server.args, 'log', False) or wandb is None:
         return
@@ -129,6 +130,9 @@ def log_server_eval(server, train_loss, test_acc, test_auc, test_acc_std, test_a
                 if len(valid_stds) > 0:
                     S = torch.stack(valid_stds)
                     wandb_log_dict["proto/mean_pooled_std"] = float(torch.mean(S).item())
+
+            if extra_metrics is not None and isinstance(extra_metrics, dict):
+                wandb_log_dict.update(extra_metrics)
 
             step = getattr(server, 'current_round', None)
             if step is not None:

@@ -64,6 +64,10 @@ class Server(object):
         self.rs_test_auc = []
         self.rs_train_loss = []
         self.rs_client_test_acc = {}
+        self.rs_proto_margin = []
+        self.rs_proto_margin_norm = []
+        self.rs_bhat_overlap = []
+        self.rs_bhat_dist = []
 
         self.times = times
         self.eval_gap = args.eval_gap
@@ -273,6 +277,11 @@ class Server(object):
                         hf.create_dataset('rs_client_test_acc', data=client_matrix)
                     except Exception:
                         pass
+                if len(self.rs_proto_margin):
+                    hf.create_dataset('rs_proto_margin', data=self.rs_proto_margin)
+                    hf.create_dataset('rs_proto_margin_norm', data=self.rs_proto_margin_norm)
+                    hf.create_dataset('rs_bhat_overlap', data=self.rs_bhat_overlap)
+                    hf.create_dataset('rs_bhat_dist', data=self.rs_bhat_dist)
 
         log_server_summary(self)
 
@@ -361,6 +370,18 @@ class Server(object):
                 self.rs_client_test_acc[c_id] = []
             self.rs_client_test_acc[c_id].append(c_acc)
 
+        from utils.motivation_metrics import compute_motivation_metrics
+        mot_metrics = compute_motivation_metrics(self)
+        self.rs_proto_margin.append(mot_metrics["charts/prototype_margin"])
+        self.rs_proto_margin_norm.append(mot_metrics["charts/prototype_margin_norm"])
+        self.rs_bhat_overlap.append(mot_metrics["charts/bhattacharyya_overlap"])
+        self.rs_bhat_dist.append(mot_metrics["charts/bhattacharyya_dist"])
+        print("Prototype Margin: {:.4f} (Norm: {:.4f}) | Bhattacharyya Overlap: {:.4f}".format(
+            mot_metrics["charts/prototype_margin"],
+            mot_metrics["charts/prototype_margin_norm"],
+            mot_metrics["charts/bhattacharyya_overlap"]
+        ))
+
         if getattr(self.args, 'log', False):
             if hasattr(self, 'writer') and self.writer is not None:
                 self.writer.add_scalar("charts/train_loss", train_loss, self.current_round)
@@ -368,11 +389,15 @@ class Server(object):
                 self.writer.add_scalar("charts/test_auc", test_auc, self.current_round)
                 self.writer.add_scalar("charts/test_acc_std", test_acc_std, self.current_round)
                 self.writer.add_scalar("charts/test_auc_std", test_auc_std, self.current_round)
+                self.writer.add_scalar("charts/prototype_margin", mot_metrics["charts/prototype_margin"], self.current_round)
+                self.writer.add_scalar("charts/prototype_margin_norm", mot_metrics["charts/prototype_margin_norm"], self.current_round)
+                self.writer.add_scalar("charts/bhattacharyya_overlap", mot_metrics["charts/bhattacharyya_overlap"], self.current_round)
+                self.writer.add_scalar("charts/bhattacharyya_dist", mot_metrics["charts/bhattacharyya_dist"], self.current_round)
                 for c_id, c_acc in client_accs.items():
                     self.writer.add_scalar(f"clients/client_{c_id}_test_acc", c_acc, self.current_round)
                     self.writer.add_scalar(f"clients_acc/client_{c_id}", c_acc, self.current_round)
 
-            log_server_eval(self, train_loss, test_acc, test_auc, test_acc_std, test_auc_std, client_accs=client_accs)
+            log_server_eval(self, train_loss, test_acc, test_auc, test_acc_std, test_auc_std, client_accs=client_accs, extra_metrics=mot_metrics)
         
         self.evaluate_global()
 

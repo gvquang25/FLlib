@@ -172,6 +172,7 @@ dataset/Tiny-imagenet
 dataset/emnist/
 *.csv
 *.pdf
+!figures/*.pdf
 *.zip
 assign.py
 wandb/

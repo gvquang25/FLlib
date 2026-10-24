@@ -1,0 +1,174 @@
+% =====================================================================
+% FedSCD Formulation with Literature & Codebase Mapping
+% Target Codebase: FLlib (clientnew_pcl.py & servernew_pcl.py)
+% =====================================================================
+
+% ---------------------------------------------------------------------
+\subsection{Client Side: Distribution-Aware Prototype Learning}
+\label{sec:client}
+% Order: distance -> discriminative term -> compactness term
+%        -> global alignment term -> covariance estimation -> objective.
+ 
+\paragraph{Class-conditional Gaussian anchors.}
+In round $t$, client $k$ receives $\{\mu^c,\sigma^c,\phi^c\}_{c=1}^{C}$ from the server and models class $c$ as a Gaussian with diagonal covariance, centered at the anchor
+% [Origin: Empirical Bayes / James-Stein-style shrinkage toward the global population prior]
+% [Code: clientnew_pcl.py -> clientNewPCL._build_proto_cache(), Lines 172-183]
+%   gamma_c = self.bayes_shrink_max * (n_c / (n_c + 50.0))
+%   p_vec   = (1.0 - gamma_c) * g_vec + gamma_c * l_vec
+\begin{equation}
+  p^c=(1-\gamma^c)\,\mu^c+\gamma^c\,\mu_k^c,\qquad
+  \gamma^c=\gamma_{\max}\,\frac{n_k^c}{n_k^c+50}.
+\end{equation}
+The anchors are fixed during local training; only $f_k$ and $h_k$ are updated. Below, $\mathrm{mean}(\cdot)$ averages over the $d$ dimensions. Let $v^c=(\sigma^c)^{\odot 2}+\tau_v\mathbf{1}$ with $\tau_v=\max\!\big(0.25\,\mathrm{mean}((\sigma^c)^{\odot 2}),\,10^{-2}\big)$, and let
+% [Origin: Feature SNR gating / soft dead-ReLU suppression; downweights low-energy feature dimensions]
+% [Code: clientnew_pcl.py -> clientNewPCL._build_proto_cache(), Lines 208-212]
+%   proto_sq = proto_tensor.pow(2); mean_proto_sq = torch.mean(proto_sq, dim=1, keepdim=True)
+%   raw_gate = (0.5 + 0.5 * norm_signal) / (1.0 + 0.5 * norm_signal)
+%   snr_gate = raw_gate / (torch.mean(raw_gate, dim=1, keepdim=True) + 1e-8)
+\begin{equation}
+\begin{aligned}
+  s^c&=\frac{(p^c)^{\odot 2}}{\mathrm{mean}\big((p^c)^{\odot 2}\big)},\qquad
+  r^c=\frac{0.5+0.5\,s^c}{1+0.5\,s^c},\\
+  g^c&=\frac{r^c}{\mathrm{mean}(r^c)}
+\end{aligned}
+\end{equation}
+be signal weights that downscale inactive dimensions. The weighted Mahalanobis distance of a feature $z=f_k(x)$ to class $c$ is
+% [Origin: Precision-weighted Mahalanobis distance / Gaussian NLL with regularized variance floor tau_v]
+% [Code: clientnew_pcl.py -> clientNewPCL._build_proto_cache() & compute_pcl_loss(), Lines 202-205, 315-318]
+%   mahalanobis_denom = std_tensor.pow(2) + max(0.25 * mean_var, 1e-2)
+%   loss_compact = torch.sum(pos_gate * (sub_rep - pos_protos).pow(2) / pos_denom) / d
+\begin{equation}
+  d^c(z)=\frac{1}{d}\sum_{j=1}^{d}\frac{g^c_j\,(z_j-p^c_j)^2}{v^c_j}.
+  \label{eq:dist}
+\end{equation}
+
+\paragraph{Projection.}
+Let $m=\frac{1}{C}\sum_c p^c$ and $u^c=(v^c)^{-1/2}\odot g^c$. Averaging $u^c/\mathrm{mean}(u^c)$ over classes and rescaling to unit mean gives a weight vector $w$. Features and anchors are centered, reweighted and normalized:
+% [Origin: Hypersphere Centering (prevents positive orthant / ReLU cone collapse) + Precision Whitening]
+% [Code: clientnew_pcl.py -> clientNewPCL._build_proto_cache() & compute_pcl_loss(), Lines 199, 215-218, 274-278]
+%   proto_center = torch.mean(proto_tensor, dim=0, keepdim=True)
+%   shared_inv_std = class_inv_std.mean(dim=0, keepdim=True); shared_inv_std /= shared_inv_std.mean()
+%   f_centered = (sub_rep - center) * w_s; f_norm = F.normalize(f_centered, dim=1)
+%   p_centered = (protos - center) * w_p;  p_norm = F.normalize(p_centered, dim=1)
+\begin{equation}
+\begin{aligned}
+  \hat z&=\frac{(z-m)\odot w}{\|(z-m)\odot w\|_2},\\
+  q^c&=\frac{(p^c-m)\odot w}{\|(p^c-m)\odot w\|_2}.
+\end{aligned}
+\label{eq:proj}
+\end{equation}
+
+\paragraph{ProtoNCE term.}
+A sample is contrasted against all anchors at the temperature of its own class:
+% [Origin: Prototypical Contrastive Learning (PCL, Li et al., ICLR 2021) ProtoNCE loss with dynamic phi^y]
+% [Code: clientnew_pcl.py -> clientNewPCL.compute_pcl_loss(), Lines 280-282]
+%   sim_proto = torch.matmul(f_norm, p_norm.T) / cache['phi_tensor']
+%   loss_protonce = F.cross_entropy(sim_proto, sub_targets, reduction='sum')
+\begin{equation}
+  \mathcal{L}_{\mathrm{NCE}}=-\mathbb{E}_{(x,y)\sim\mathcal{D}_k}\log\frac{\exp(\hat z^{\top}q^y/\phi^y)}{\sum_{c}\exp(\hat z^{\top}q^c/\phi^y)}.
+  \label{eq:nce}
+\end{equation}
+
+\paragraph{Supervised contrastive term.}
+Batch features and anchors form one bank $\mathcal{B}=\{\hat z_j\}\cup\{q^c\}$. For a batch sample $i$, $\mathcal{P}_i$ holds the bank entries with the same label (except $i$) and $\mathcal{N}_i$ the rest. Each positive pair is normalized only against the negatives, so same-class entries are never pushed apart:
+% [Origin: Supervised Contrastive Learning (SupCon, Khosla et al., NeurIPS 2020) combined with Decoupled Contrastive Learning (DCL, Yeh et al., CVPR 2022) to remove positive-pair repulsion]
+% [Code: clientnew_pcl.py -> clientNewPCL.compute_pcl_loss(), Lines 284-312]
+%   all_feats = torch.cat([f_norm, p_norm], dim=0)
+%   denom = exp_sim + neg_exp_sum
+%   loss_supcon = -mean_log_prob_pos.sum()
+\begin{equation}
+\begin{aligned}
+  \mathcal{L}_{\mathrm{SC}}&=-\mathbb{E}_i\,\frac{1}{|\mathcal{P}_i|}\sum_{p\in\mathcal{P}_i}\log\frac{e^{s_{ip}/\tau}}{e^{s_{ip}/\tau}+\sum_{n\in\mathcal{N}_i}e^{s_{in}/\tau}},\\
+  s_{ij}&=\hat z_i^{\top}b_j .
+\end{aligned}
+\label{eq:sc}
+\end{equation}
+
+\paragraph{Compactness term.}
+% [Origin: Convolutional Prototype Learning (CPL, Yang et al., CVPR 2018) / Deep Center Loss (Wen et al., ECCV 2016)]
+% [Code: clientnew_pcl.py -> clientNewPCL.compute_pcl_loss(), Lines 314-318]
+%   loss_compact = torch.sum(pos_gate * (sub_rep - pos_protos).pow(2) / pos_denom) / feat_dim
+\begin{equation}
+  \mathcal{L}_{\mathrm{PL}}=\mathbb{E}_{(x,y)\sim\mathcal{D}_k}\;d^{y}\big(f_k(x)\big).
+  \label{eq:pl}
+\end{equation}
+
+\paragraph{Local objectives.}
+The extractor is trained with
+% [Origin: Multi-task representation objective with progressive ramp-up regularization schedule]
+% [Code: clientnew_pcl.py -> clientNewPCL.train(), Lines 404-407, 415-435]
+%   eff_lamda_proto = self.lamda_proto * min(1.0, (num_rounds - warmup_rounds + 1) / rampup_rounds)
+%   loss_enc = loss_ce_enc + eff_lamda_proto * pcl_loss
+\begin{equation}
+  \mathcal{L}_{\mathrm{enc}}=\mathcal{L}_{\mathrm{CE}}\big(h_k(f_k(x)),y\big)+\lambda_t\big(\mathcal{L}_{\mathrm{NCE}}+\mathcal{L}_{\mathrm{PL}}+\lambda_{\mathrm{ins}}\mathcal{L}_{\mathrm{SC}}\big),
+  \label{eq:enc}
+\end{equation}
+where $\lambda_t=0$ during warm-up and then grows linearly to $\lambda$. The head sees detached features and, after warm-up, virtual features drawn from the shared statistics:
+% [Origin: Decoupled Head-Representation Training (Luo et al., 2021; Kang et al., ICLR 2020) + Gaussian Virtual Feature Calibration for non-IID/missing classes]
+% [Code: clientnew_pcl.py -> clientNewPCL._compute_virtual_head_loss(), Lines 323-381; train(), Lines 410-414]
+%   z_virt_local = pos_protos + 0.5 * eps_local * pos_stds   # alpha = 0.5
+%   z_virt_all   = protos     + 0.3 * eps_all   * stds       # alpha = 0.3
+%   loss_head = loss_ce_head + virt_loss
+\begin{equation}
+\begin{aligned}
+  \mathcal{L}_{\mathrm{head}}&=\mathcal{L}_{\mathrm{CE}}\big(h_k(\mathrm{sg}[f_k(x)]),y\big)
+  +\lambda_{\mathrm{vl}}\,\mathcal{L}_{\mathrm{CE}}\big(h_k(\tilde z^{\,y}),y\big)\\
+  &\quad+\lambda_{\mathrm{vg}}\,\mathbb{E}_c\,\mathcal{L}_{\mathrm{CE}}\big(h_k(\tilde z^{\,c}),c\big),
+\end{aligned}
+\label{eq:head}
+\end{equation}
+where $\mathrm{sg}[\cdot]$ is the stop-gradient operator and $\tilde z^{\,c}=p^c+\alpha\,\epsilon\odot\sigma^c$ with $\epsilon\sim\mathcal{N}(0,I)$, $\alpha=0.5$ for the local term and $\alpha=0.3$ for the global one.
+
+\begin{remark}[Relation to prior objectives]
+Equation~\ref{eq:nce} follows the ProtoNCE loss of \citet{li2021prototypical}, with the temperature taken from federated statistics (Section~\ref{sec:server}). The compactness term is in the spirit of convolutional prototype learning~\citep{yang2018cpl}, here weighted per dimension, and Eq.~\ref{eq:sc} is a supervised contrastive loss~\citep{khosla2020supervised} whose denominator leaves out same-class pairs. What \textsc{FedSCD} adds is the use of shared per-dimension variance in the projection, the temperature and the compactness weights.
+\end{remark}
+% Keep this remark: AGCL and FedUP are close to the client side, so the
+% novelty claim should rest on the server side and the coupling.
+ 
+% ---------------------------------------------------------------------
+\subsection{Server Side: Statistics-Consistent Aggregation}
+\label{sec:server}
+
+Given client statistics $\{(n_k^c,\mu_k^c,\sigma_k^c)\}$ from the participating clients $S_t$ in round $t$, with $\bar n_t^c=\sum_{k\in S_t}n_k^c\ge 1$, the pooled mean is
+% [Origin: Sample-weighted unbiased pooled mean aggregation across clients]
+% [Code: servernew_pcl.py -> proto_aggregation_pcl(), Lines 198-201]
+%   batch_mean = sum(n_k * mean_k) / sum(n_k)
+\begin{equation}
+\bar\mu_t^c=\frac{1}{\bar n_t^c}\sum_{k\in S_t}n_k^c\,\mu_k^c, \label{eq:server_mean}
+\end{equation}
+and the pooled variance decomposes into within-client and between-client parts:
+% [Origin: Law of Total Variance: Var(X) = E[Var(X|K)] + Var(E[X|K]), accounting for non-IID client drift]
+% [Code: servernew_pcl.py -> proto_aggregation_pcl(), Lines 203-211]
+%   pooled_var = sum(n_k * (std_k^2 + (mean_k - batch_mean)^2)) / sum(n_k)
+%   batch_std  = torch.sqrt(torch.clamp(pooled_var, min=1e-8))
+\begin{equation}
+(\bar\sigma_t^c)^2=\frac{1}{\bar n_t^c}\sum_{k\in S_t}n_k^c\Big[(\sigma_k^c)^2+\big(\mu_k^c-\bar\mu_t^c\big)^{\odot 2}\Big], \label{eq:server_var}
+\end{equation}
+where the second term captures the dispersion of local means across heterogeneous clients. A momentum step with $\eta\in(0,1]$ smooths the statistics across rounds:
+% [Origin: EMA momentum smoothing (MoCo, He et al., CVPR 2020; PCL, Li et al., ICLR 2021) to stabilize trajectory against client sub-sampling]
+% [Code: servernew_pcl.py -> proto_aggregation_pcl(), Lines 214-224, 237-250]
+%   final_mean  = (1.0 - momentum) * prev_mean  + momentum * batch_mean
+%   final_std   = (1.0 - momentum) * prev_std   + momentum * batch_std
+%   total_count = (1.0 - momentum) * prev_count + momentum * batch_count
+\begin{equation}
+s_t^c=(1-\eta)\,s_{t-1}^c+\eta\,\bar s_t^c,\qquad\text{where } s\in\{\mu,\sigma,n\},
+\label{eq:server_mom}
+\end{equation}
+where a class seen for the first time is initialized with its pooled statistics, and classes absent from round $t$ keep their previous statistics. From the smoothed statistics, the server derives a density-aware concentration:
+% [Origin: Prototypical Contrastive Learning (PCL, Li et al., ICLR 2021) cluster concentration estimation]
+% [Code: servernew_pcl.py -> proto_aggregation_pcl(), Lines 226-230]
+%   std_norm  = norm(final_std, 2) / (norm(final_mean, 2) + 1e-6)
+%   raw_phi_c = std_norm / log(total_count + 10.0)
+\begin{align}
+r_t^c &= \frac{\|\sigma_t^c\|_2/\|\mu_t^c\|_2}{\log(n_t^c+\kappa)}, \label{eq:raw_conc}\\
+% [Origin: Mean-normalized temperature calibration with bounding margin rho (phi_range) for gradient stability]
+% [Code: servernew_pcl.py -> proto_aggregation_pcl(), Lines 264-276]
+%   scaled_phi = base_tau * (raw_phi_c / mean_raw_phi)
+%   phi_c      = clip(scaled_phi, (1 - phi_range) * base_tau, (1 + phi_range) * base_tau)
+\phi_t^c &= \mathrm{clip}\!\Big(\tau\,\frac{r_t^c}{\frac{1}{|\mathcal{C}_t|}\sum_{c'\in\mathcal{C}_t}r_t^{c'}},\,(1-\rho)\tau,\,(1+\rho)\tau\Big), \label{eq:temp_clip}
+\end{align}
+with smoothing constant $\kappa=10$, base temperature $\tau$, modulation margin $\rho$, and $\mathcal{C}_t$ the set of observed classes up to round $t$ (unobserved classes keep $\phi_t^c=\tau$). Finally, the server broadcasts $\{\mu_t^c,\sigma_t^c,\phi_t^c\}_{c=1}^C$ to all clients.
+% Choice of beta: fixed hyperparameter vs. adaptive rule (e.g., based on
+% how far client means disagree relative to within-client spread).
+% Contrast with FedUP (Wasserstein barycenter) and AGCL (sampling +
+% re-clustering) in one or two sentences.

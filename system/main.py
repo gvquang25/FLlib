@@ -589,6 +589,8 @@ from flcore.servers.serverfpl import serverFPL
 from flcore.servers.servernew import FedNew
 from flcore.servers.servernew_proto import FedNewProto
 from flcore.servers.servernew_pcl import FedNewPCL
+from flcore.servers.servertgp import FedTGP
+from flcore.servers.serverccvr import CCVR
 
 from flcore.trainmodel.models import *
 
@@ -906,6 +908,18 @@ def run(args):
             args.model = BaseHeadSplit(args.model, args.head)
             server = FedNewPCL(args, i)
 
+        elif args.algorithm in ["FedTGP", "fedtgp"]:
+            args.head = copy.deepcopy(args.model.fc)
+            args.model.fc = nn.Identity()
+            args.model = BaseHeadSplit(args.model, args.head)
+            server = FedTGP(args, i)
+
+        elif args.algorithm in ["CCVR", "ccvr"]:
+            args.head = copy.deepcopy(args.model.fc)
+            args.model.fc = nn.Identity()
+            args.model = BaseHeadSplit(args.model, args.head)
+            server = CCVR(args, i)
+
         else:
             raise NotImplementedError
 
@@ -1091,6 +1105,20 @@ if __name__ == "__main__":
                         help="Number of virtual Gaussian samples per class per batch")
     parser.add_argument('--eval_mode', type=str, default='head', choices=['head', 'proto'],
                         help="Evaluation mode: 'head' (classifier head) or 'proto' (Mahalanobis metric)")
+
+    # FedTGP Hyperparameters
+    parser.add_argument('--tgp_server_epochs', type=int, default=100,
+                        help="Number of server epochs for FedTGP prototype model")
+    parser.add_argument('--margin_threthold', type=float, default=100.0,
+                        help="Margin threshold for FedTGP adaptive margin")
+    parser.add_argument('--tgp_server_lr', type=float, default=0.01,
+                        help="Server learning rate for FedTGP")
+
+    # CCVR Hyperparameters
+    parser.add_argument('--ccvr_samples', type=int, default=100,
+                        help="Number of virtual samples per class for CCVR calibration")
+    parser.add_argument('--ccvr_epochs', type=int, default=5,
+                        help="Number of epochs for CCVR classifier head calibration")
 
     # Seed & Data Loader
     parser.add_argument('-sd', "--seed", type=int, default=None,
