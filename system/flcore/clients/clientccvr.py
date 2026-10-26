@@ -64,7 +64,11 @@ class clientCCVR(Client):
                 mat = torch.stack(feats_by_cls[c], dim=0)
                 n_c = mat.size(0)
                 mean_c = mat.mean(dim=0)
-                std_c = mat.std(dim=0, unbiased=True) if n_c > 1 else torch.zeros_like(mean_c)
+                if n_c > 1:
+                    std_c = mat.std(dim=0, unbiased=False)
+                    std_c = torch.nan_to_num(std_c, nan=0.0, posinf=0.0, neginf=0.0)
+                else:
+                    std_c = torch.zeros_like(mean_c)
                 stats[c] = {'mean': mean_c, 'std': std_c, 'count': int(n_c)}
             else:
                 stats[c] = {'mean': torch.zeros(feat_dim), 'std': torch.zeros(feat_dim), 'count': 0}

@@ -81,7 +81,9 @@ class clientTGP(Client):
             if len(proto_list) > 1:
                 mat = torch.stack(proto_list, dim=0)
                 agg_protos[label] = mat.mean(dim=0)
-                stats[label] = {'mean': agg_protos[label], 'std': mat.std(dim=0, unbiased=True), 'count': int(mat.size(0))}
+                std_c = mat.std(dim=0, unbiased=False)
+                std_c = torch.nan_to_num(std_c, nan=0.0, posinf=0.0, neginf=0.0)
+                stats[label] = {'mean': agg_protos[label], 'std': std_c, 'count': int(mat.size(0))}
             else:
                 agg_protos[label] = proto_list[0]
                 stats[label] = {'mean': proto_list[0], 'std': torch.zeros_like(proto_list[0]), 'count': 1}

@@ -53,7 +53,11 @@ def extract_and_pool_gaussian_stats(server):
                 mat = torch.stack(flist, dim=0)
                 n_kc = mat.size(0)
                 mean_c = mat.mean(dim=0)
-                std_c = mat.std(dim=0, unbiased=True) if n_kc > 1 else torch.zeros_like(mean_c)
+                if n_kc > 1:
+                    std_c = mat.std(dim=0, unbiased=False)
+                    std_c = torch.nan_to_num(std_c, nan=0.0, posinf=0.0, neginf=0.0)
+                else:
+                    std_c = torch.zeros_like(mean_c)
                 c_stats[c] = {'mean': mean_c, 'std': std_c, 'count': int(n_kc)}
             local_stats_list.append(c_stats)
         finally:
@@ -81,7 +85,9 @@ def extract_and_pool_gaussian_stats(server):
             v['count'] * ((v['std'].detach().cpu().float() ** 2) + (v['mean'].detach().cpu().float() - g_mean) ** 2)
             for v in valid
         ) / float(total_n)
-        g_std = torch.sqrt(torch.clamp(g_var, min=1e-8))
+        g_mean = torch.nan_to_num(g_mean, nan=0.0, posinf=0.0, neginf=0.0)
+        g_var = torch.nan_to_num(g_var, nan=1e-4, posinf=1.0, neginf=1e-4)
+        g_std = torch.sqrt(torch.clamp(g_var, min=1e-4))
         pooled_stats[c] = {'mean': g_mean, 'std': g_std, 'count': total_n}
 
     return pooled_stats
@@ -149,25 +155,36 @@ def compute_motivation_metrics(server, eps=1e-6):
         mean_norm = torch.norm(mu_anchor, p=2, dim=-1).mean().clamp(min=1e-6)
         proto_margin_norm = float(proto_margin / mean_norm.item())
 
-        # 3. Bhattacharyya Distance & Overlap giữa các phân phối lớp gộp (Eq. 3 trong bài báo)
-        mask = ~torch.eye(C, dtype=torch.bool)
-        diff = mu_dist.unsqueeze(1) - mu_dist.unsqueeze(0)        # [C, C, d]
-        var_a = var_dist.unsqueeze(1)                             # [C, 1, d]
-        var_b = var_dist.unsqueeze(0)                             # [1, C, d]
-        var_bar = 0.5 * (var_a + var_b)                           # [C, C, d]
+        # 3. Bhattacharyya Distance & Overlap giữa các phân phối lớp gộp trên các chiều hoạt động
+        active_mask = (var_dist.mean(dim=0) > 1e-4)
+        if active_mask.sum() >= 2:
+            mu_act = mu_dist[:, active_mask]
+            var_act = var_dist[:, active_mask]
+        else:
+            mu_act = mu_dist
+            var_act = var_dist
 
-        term1 = 0.125 * torch.sum((diff ** 2) / var_bar, dim=-1)  # [C, C]
+        d_eff = mu_act.size(1)
+        mask = ~torch.eye(C, dtype=torch.bool)
+        diff = mu_act.unsqueeze(1) - mu_act.unsqueeze(0)          # [C, C, d_eff]
+        var_a = torch.clamp(var_act.unsqueeze(1), min=1e-4)       # [C, 1, d_eff]
+        var_b = torch.clamp(var_act.unsqueeze(0), min=1e-4)       # [1, C, d_eff]
+        var_bar = 0.5 * (var_a + var_b)
+
+        term1 = 0.125 * torch.sum((diff ** 2) / var_bar, dim=-1)
         term2 = 0.5 * torch.sum(
             torch.log(var_bar) - 0.5 * (torch.log(var_a) + torch.log(var_b)),
             dim=-1
-        )                                                         # [C, C]
+        )
 
         D_B = term1 + term2                                       # [C, C]
-        D_B_per_dim = D_B / float(d)
-        overlap_mat = torch.exp(-D_B_per_dim)                     # \in (0, 1]
+        # Chuẩn hóa theo căn bậc hai số chiều hoạt động để tránh bão hòa hàm mũ ở không gian nhiều chiều
+        D_B_scaled = D_B / np.sqrt(float(d_eff))
+        overlap_mat = torch.exp(-D_B_scaled)
+        overlap_mat = torch.nan_to_num(overlap_mat, nan=1.0, posinf=1.0, neginf=0.0)
 
-        bhat_overlap = overlap_mat[mask].mean().item()
-        bhat_dist = D_B_per_dim[mask].mean().item()
+        bhat_overlap = float(overlap_mat[mask].mean().item())
+        bhat_dist = float(D_B_scaled[mask].mean().item())
 
         return {
             "charts/prototype_margin": proto_margin,
