@@ -1083,8 +1083,8 @@ if __name__ == "__main__":
                         help="Projection hypersphere mode: class-specific or shared")
     parser.add_argument('--phi_range', type=float, default=0.1,
                         help="Dynamic temperature clipping range")
-    parser.add_argument('--lamda_virt_local', type=float, default=0.15,
-                        help="Local virtual feature regularization weight")
+    parser.add_argument('--lamda_virt_local', type=float, default=0.0,
+                        help="Local virtual feature regularization weight (default: 0.0)")
     parser.add_argument('--lamda_virt_global', type=float, default=0.05,
                         help="Global virtual feature regularization weight")
     parser.add_argument('--pcl_aug', type=int, default=1,

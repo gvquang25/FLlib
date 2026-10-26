@@ -52,8 +52,8 @@ class clientNewPCL(DecoupledClient):
         self.proto_rampup = 5 if getattr(args, 'proto_rampup', None) is None else max(1, int(args.proto_rampup))
         self.lamda_ins = 0.05 if getattr(args, 'lamda_ins', None) is None else float(args.lamda_ins)
 
-        v_virt_local = getattr(args, 'lamda_virt_local', 0.15)
-        self.lamda_virt_local = 0.15 if v_virt_local is None else float(v_virt_local)
+        v_virt_local = getattr(args, 'lamda_virt_local', 0.0)
+        self.lamda_virt_local = 0.0 if v_virt_local is None else float(v_virt_local)
 
         v_virt_global = getattr(args, 'lamda_virt_global', 0.05)
         self.lamda_virt_global = 0.05 if v_virt_global is None else float(v_virt_global)
