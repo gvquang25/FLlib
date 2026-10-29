@@ -8,7 +8,7 @@ ALGO_CONFIG = [
     ("FedProto", "FedProto", "#7f7f7f", "--", 1.7, 2),
     ("CCVR", "CCVR", "#2ca02c", ":", 1.8, 3),
     ("FedTGP", "FedTGP", "#d95f02", "-.", 1.9, 4),
-    ("FedNewPCL", "FedSCD (Ours)", "#0072B2", "-", 2.4, 5),
+    ("FedSCD", "FedSCD (Ours)", "#0072B2", "-", 2.4, 5),
 ]
 
 
@@ -49,6 +49,10 @@ def load_histories(results_dir="results", dataset="Cifar10", goal="test", run_id
     for item in ALGO_CONFIG:
         algo_code, display_name = item[0], item[1]
         h5_path = os.path.join(results_dir, f"{dataset}_{algo_code}_{goal}_{run_idx}.h5")
+        if not os.path.exists(h5_path) and algo_code == "FedSCD":
+            fallback_path = os.path.join(results_dir, f"{dataset}_FedNewPCL_{goal}_{run_idx}.h5")
+            if os.path.exists(fallback_path):
+                h5_path = fallback_path
         if os.path.exists(h5_path):
             with h5py.File(h5_path, "r") as hf:
                 if "rs_proto_margin" not in hf or "rs_bhat_overlap" not in hf:

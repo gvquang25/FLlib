@@ -7,9 +7,9 @@ Set-Location "$scriptDir\system"
 $PYTHON = "$scriptDir\venv\Scripts\python.exe"
 
 Write-Host "==========================================================" -ForegroundColor Cyan
-Write-Host " [1/4] Chay FedNewPCL (FedSCD - Ours)..." -ForegroundColor Green
+Write-Host " [1/4] Chay FedSCD (Ours)..." -ForegroundColor Green
 Write-Host "==========================================================" -ForegroundColor Cyan
-& $PYTHON main.py -data Cifar10 -m cnn -algo FedNewPCL -gr 100 -did 0 -lbs 32 -tbs 512 -lr 0.01 -nc 20 --noniid --alpha_dirich 0.5 -lam 0.1 -sd 42 -log --proj_mode shared --lamda_virt_local 0.0
+& $PYTHON main.py -data Cifar10 -m cnn -algo FedSCD -gr 100 -did 0 -lbs 32 -tbs 512 -lr 0.01 -nc 20 --noniid --alpha_dirich 0.5 -lam 0.1 -sd 42 -log --proj_mode shared --lamda_virt_local 0.0
 
 Write-Host "==========================================================" -ForegroundColor Cyan
 Write-Host " [2/4] Chay FedProto..." -ForegroundColor Green

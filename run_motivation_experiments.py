@@ -5,10 +5,10 @@ import time
 
 EXPERIMENTS = [
     {
-        "name": "FedNewPCL (FedSCD - Ours)",
+        "name": "FedSCD (Ours)",
         "cmd": [
             sys.executable, "main.py",
-            "-data", "Cifar10", "-m", "cnn", "-algo", "FedNewPCL",
+            "-data", "Cifar10", "-m", "cnn", "-algo", "FedSCD",
             "-gr", "100", "-did", "0", "-lbs", "32", "-tbs", "512",
             "-lr", "0.01", "-nc", "20", "--noniid", "--alpha_dirich", "0.5",
             "-lam", "0.1", "-sd", "42", "-log",

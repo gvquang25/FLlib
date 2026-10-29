@@ -1,3 +1,4 @@
+import ssl
 import numpy as np
 import os
 import sys
@@ -6,6 +7,8 @@ import torch
 import torchvision
 import torchvision.transforms as transforms
 from utils.dataset_utils import check, separate_data, split_data, save_file
+
+ssl._create_default_https_context = ssl._create_unverified_context
 
 
 random.seed(1)

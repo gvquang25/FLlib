@@ -588,7 +588,7 @@ from flcore.servers.serverprotostd import FedProtoStd
 from flcore.servers.serverfpl import serverFPL
 from flcore.servers.servernew import FedNew
 from flcore.servers.servernew_proto import FedNewProto
-from flcore.servers.servernew_pcl import FedNewPCL
+from flcore.servers.serverscd import FedSCD, FedNewPCL
 from flcore.servers.servertgp import FedTGP
 from flcore.servers.serverccvr import CCVR
 
@@ -835,7 +835,7 @@ def run(args):
             args.model = BaseHeadSplit(args.model, args.head)
             server = FedProto(args, i)
 
-        elif args.algorithm == "FedProtoStd":
+        elif args.algorithm in ["FedProtoStd", "ProtoStd"]:
             args.head = copy.deepcopy(args.model.fc)
             args.model.fc = nn.Identity()
             args.model = BaseHeadSplit(args.model, args.head)
@@ -902,11 +902,11 @@ def run(args):
             args.model = BaseHeadSplit(args.model, args.head)
             server = FedNewProto(args, i)
 
-        elif args.algorithm in ["FedNewPCL", "fednewpcl", "NewPCL", "newpcl"]:
+        elif args.algorithm in ["FedSCD", "fedscd", "SCD", "scd", "FedNewPCL", "fednewpcl", "NewPCL", "newpcl", "FedPCL", "fedpcl"]:
             args.head = copy.deepcopy(args.model.fc)
             args.model.fc = nn.Identity()
             args.model = BaseHeadSplit(args.model, args.head)
-            server = FedNewPCL(args, i)
+            server = FedSCD(args, i)
 
         elif args.algorithm in ["FedTGP", "fedtgp"]:
             args.head = copy.deepcopy(args.model.fc)
@@ -1074,11 +1074,11 @@ if __name__ == "__main__":
                         help="Separate learning rate for the encoder/backbone (default None: shared optimizer)")
     parser.add_argument('--tsne_gap', type=int, default=None, 
                         help="Interval for t-SNE visualization (None or <= 0 defaults to eval_gap)")
-    # FedNewPCL Hyperparameters
+    # FedSCD Hyperparameters
     parser.add_argument('--proto_momentum', type=float, default=0.1,
                         help="Momentum EMA coefficient for PCL prototype update (default: 0.1)")
     parser.add_argument('--lamda_ins', type=float, default=0.05,
-                        help="Weight for intra-batch instance contrastive loss in FedNewPCL (default: 0.05)")
+                        help="Weight for intra-batch instance contrastive loss in FedSCD (default: 0.05)")
     parser.add_argument('--proj_mode', type=str, default='shared', choices=['class', 'shared'],
                         help="Projection hypersphere mode: class-specific or shared")
     parser.add_argument('--phi_range', type=float, default=0.1,

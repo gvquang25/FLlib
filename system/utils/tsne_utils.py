@@ -13,7 +13,7 @@ def plot_client_tsne(client, round_idx=0, max_samples=1000, save_dir="./tsne_res
     """
     Trực quan hóa không gian đặc trưng bằng t-SNE cho client:
     - Trích xuất đặc trưng qua client.encoder trên test set (100% Read-Only, dưới torch.no_grad).
-    - Với FedNewPCL: Chiếu đặc trưng và Prototype vào không gian Whitened Prototype Subspace
+    - Với FedSCD: Chiếu đặc trưng và Prototype vào không gian Whitened Prototype Subspace
       kết hợp Fisher SNR Weighting & PCL Concentration Kernel để lọc nhiễu biến đổi góc nhìn
       trực giao, giúp các cụm tách biệt sắc nét và đẩy Silhouette score lên cao.
     - Phân biệt Prototype active (lớp có dữ liệu) và inactive (lớp khuyết trong Non-IID).

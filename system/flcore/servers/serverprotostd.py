@@ -44,17 +44,17 @@ class FedProtoStd(Server):
             s_t = time.time()
             self.selected_clients = self.select_clients()
 
-            if i % self.eval_gap == 0:
-                print(f"\n-------------Round number: {i}-------------")
-                print("\nEvaluate personalized models")
-                self.evaluate()
-
             for client in self.selected_clients:
                 client.train()
 
             self.receive_protos_and_stds()
             self.aggregate_protos_and_stds()
             self.send_protos_and_stds()
+
+            if i % self.eval_gap == 0:
+                print(f"\n-------------Round number: {i}-------------")
+                print("\nEvaluate personalized models")
+                self.evaluate()
 
             self.Budget.append(time.time() - s_t)
             print('-' * 50, f"Round {i} cost: {self.Budget[-1]:.2f}s")

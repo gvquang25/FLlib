@@ -399,13 +399,13 @@ class Server(object):
 
             log_server_eval(self, train_loss, test_acc, test_auc, test_acc_std, test_auc_std, client_accs=client_accs, extra_metrics=mot_metrics)
         
-        self.evaluate_global()
+        # Bỏ phần evaluate global accuracy theo yêu cầu
+        # self.evaluate_global()
 
         self.current_round += 1
 
     def evaluate_global(self):
-        if getattr(self, 'global_testloader', None) is None:
-            return
+        return
 
         client_accs = []
         for c in self.clients:

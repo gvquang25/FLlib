@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import TensorDataset, DataLoader
 
-from flcore.clients.clientnew_pcl import clientNewPCL
+from flcore.clients.clientscd import clientSCD
 from utils.tsne_utils import plot_client_tsne
 
 
@@ -26,7 +26,7 @@ class DummyModel(nn.Module):
 class DummyArgs:
     def __init__(self):
         self.model = DummyModel()
-        self.algorithm = "FedNewPCL"
+        self.algorithm = "FedSCD"
         self.dataset = "dummy"
         self.device = "cpu"
         self.save_folder_name = "test_run"
@@ -45,7 +45,7 @@ class DummyArgs:
 class TestTSNEUtils(unittest.TestCase):
     def setUp(self):
         self.args = DummyArgs()
-        self.client = clientNewPCL(self.args, 0, 100, 100, train_slow=False, send_slow=False)
+        self.client = clientSCD(self.args, 0, 100, 100, train_slow=False, send_slow=False)
 
         # Tạo dữ liệu giả lập 5 cụm (chỉ có lớp 0, 1, 2 trong dữ liệu test để mô phỏng Non-IID)
         torch.manual_seed(42)

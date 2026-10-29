@@ -16,7 +16,7 @@ def extract_and_pool_gaussian_stats(server):
     local_stats_list = []
 
     for client in clients:
-        # Nếu client đã tính sẵn local_stats ở cuối hàm train() (FedNewPCL, CCVR, FedNewProto)
+        # Nếu client đã tính sẵn local_stats ở cuối hàm train() (FedSCD, CCVR, FedNewProto)
         if hasattr(client, 'local_stats') and isinstance(client.local_stats, dict) and len(client.local_stats) > 0:
             first_v = next(iter(client.local_stats.values()))
             if isinstance(first_v, dict) and 'mean' in first_v and 'std' in first_v:
